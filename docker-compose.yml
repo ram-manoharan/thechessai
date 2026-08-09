@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: chessai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: chessai
+      POSTGRES_PASSWORD: chessai
+      POSTGRES_DB: chessai
+    ports:
+      - "5432:5432"
+    volumes:
+      - chessai-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chessai -d chessai"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Transaction-mode connection pooler. Both Prisma's runtime pool and FastAPI's
+  # asyncpg pool connect through here (port 6432) so per-instance connection counts
+  # don't multiply against Postgres's max_connections as app instances scale out.
+  # Migrations (prisma migrate / alembic) must use the DIRECT connection to postgres
+  # on 5432 instead — transaction pooling doesn't support the session-level features
+  # (advisory locks, DDL sessions) migrations need.
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: chessai-pgbouncer
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://chessai:chessai@postgres:5432/chessai
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 20
+      AUTH_TYPE: scram-sha-256
+    ports:
+      - "6432:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    container_name: chessai-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - chessai-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  chessai-postgres-data:
+  chessai-redis-data:
