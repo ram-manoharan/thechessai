@@ -15,7 +15,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from ai_service import AIService
-from visualization_service import VisualizationService
 
 # ─────────────────────────── Clock / Phase helpers ───────────────────────────
 
@@ -1004,13 +1003,11 @@ def initialize_services() -> Dict[str, Any]:
     stockfish_service = StockfishService()
     ai_service = AIService()
     opening_db_service = OpeningDBService()
-    visualization_service = VisualizationService()
     game_analysis_service = GameAnalysisService(stockfish_service, ai_service, opening_db_service)
     return {
         "stockfish_service":    stockfish_service,
         "ai_service":           ai_service,
         "opening_db_service":   opening_db_service,
-        "visualization_service": visualization_service,
         "game_analysis_service": game_analysis_service,
     }
 
