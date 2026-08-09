@@ -1,0 +1,53 @@
+# Render Blueprint — provisions the backend, Postgres, and Redis together.
+# Deploy via Render dashboard: New -> Blueprint -> select this repo.
+# Double-check field names against Render's current docs before using —
+# their service-type naming has changed over time (e.g. "redis" vs
+# "keyvalue"); this is a starting point, not guaranteed to apply as-is.
+
+databases:
+  - name: chessai-db
+    plan: starter
+    region: oregon
+    postgresMajorVersion: "16"
+
+services:
+  - type: redis
+    name: chessai-redis
+    plan: starter
+    region: oregon
+    ipAllowList: []
+
+  - type: web
+    name: chessai-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    region: oregon
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: chessai-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: chessai-redis
+          property: connectionString
+      # Set manually in the Render dashboard (Environment tab) — not stored
+      # in this file:
+      - key: INTERNAL_JWT_SECRET
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: AI_PROVIDER
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: TOGETHER_API_KEY
+        sync: false
+      - key: VISION_PROVIDER
+        sync: false
+      - key: LICHESS_EXPLORER_TOKEN
+        sync: false
