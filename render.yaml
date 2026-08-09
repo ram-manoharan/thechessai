@@ -1,12 +1,15 @@
 # Render Blueprint — provisions the backend, Postgres, and Redis together.
 # Deploy via Render dashboard: New -> Blueprint -> select this repo.
 # Double-check field names against Render's current docs before using —
-# their service-type naming has changed over time (e.g. "redis" vs
-# "keyvalue"); this is a starting point, not guaranteed to apply as-is.
+# their service-type and plan naming has changed over time (e.g. "redis" vs
+# "keyvalue"; Postgres plans moved from starter/standard/pro to size-based
+# names like basic-256mb). This is a starting point, not guaranteed to apply
+# as-is — if Render rejects a plan name, its dashboard picker shows the
+# current valid options.
 
 databases:
   - name: chessai-db
-    plan: starter
+    plan: basic-256mb
     region: oregon
     postgresMajorVersion: "16"
 
