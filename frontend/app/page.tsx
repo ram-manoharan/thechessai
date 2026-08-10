@@ -4,6 +4,8 @@ import { HeroCTA } from "@/components/landing/HeroCTA";
 import { Reveal } from "@/components/landing/Reveal";
 import { StudySpotlight } from "@/components/landing/StudySpotlight";
 import { ProfileSpotlight } from "@/components/landing/ProfileSpotlight";
+import { HeroChatDemo } from "@/components/landing/HeroChatDemo";
+import { HowItWorks } from "@/components/landing/HowItWorks";
 
 const FEATURES = [
   {
@@ -68,45 +70,6 @@ const FEATURES = [
     desc: "See what players at your exact rating play in this position, straight from the Lichess database.",
     accent: "var(--accent-blue)",
     isAI: false,
-  },
-];
-
-const PIPELINE = [
-  {
-    icon: "🔑",
-    step: "Step 1",
-    title: "Sign in free",
-    desc: "Google in one click, or create a free username. No spam.",
-    color: "var(--gold)",
-    bg: "var(--gold-subtle)",
-    border: "1px solid var(--gold-border)",
-  },
-  {
-    icon: "♟",
-    step: "Step 2",
-    title: "Import your game",
-    desc: "Paste a PGN or fetch directly from Lichess or Chess.com.",
-    color: "var(--text-muted)",
-    bg: "var(--bg-surface)",
-    border: "1px solid var(--border-strong)",
-  },
-  {
-    icon: "◈",
-    step: "Step 3",
-    title: "Stockfish + AI evaluate",
-    desc: "Engine analyses every position at depth 12, then the AI writes your report.",
-    color: "var(--accent-blue)",
-    bg: "rgba(91,142,245,0.08)",
-    border: "1px solid rgba(91,142,245,0.28)",
-  },
-  {
-    icon: "◉",
-    step: "Step 4",
-    title: "Study & track your profile",
-    desc: "Solve the puzzles it found you, and watch your profile evolve over time.",
-    color: "var(--gold)",
-    bg: "var(--gold-subtle)",
-    border: "1px solid var(--gold-border)",
   },
 ];
 
@@ -184,6 +147,12 @@ export default function Home() {
             </p>
 
             <HeroCTA />
+
+            <div className="mt-14 mx-auto text-left" style={{ maxWidth: 480 }}>
+              <Reveal delay={0.15}>
+                <HeroChatDemo />
+              </Reveal>
+            </div>
 
           </div>
         </section>
@@ -334,29 +303,7 @@ export default function Home() {
             </div>
           </Reveal>
 
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-8">
-            {PIPELINE.map((step, i) => (
-              <div key={i} style={{ textAlign: "center", position: "relative" }}>
-                {/* Connector line on desktop */}
-                {i < PIPELINE.length - 1 && (
-                  <div className="hidden sm:block" style={{ position: "absolute", top: 20, left: "calc(50% + 24px)", right: "calc(-50% + 24px)", height: 1, background: "var(--border)", zIndex: 0 }} />
-                )}
-                {/* Icon circle */}
-                <div style={{
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  width: 44, height: 44, borderRadius: "50%",
-                  background: step.bg, border: step.border,
-                  margin: "0 auto 14px", fontSize: 18, position: "relative", zIndex: 1,
-                  color: step.color,
-                }}>
-                  {step.icon}
-                </div>
-                <p style={{ color: step.color, fontSize: 10, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 6 }}>{step.step}</p>
-                <p style={{ color: "var(--text-primary)", fontWeight: 700, fontSize: 14, marginBottom: 5 }}>{step.title}</p>
-                <p style={{ color: "var(--text-muted)", fontSize: 12, lineHeight: 1.6 }}>{step.desc}</p>
-              </div>
-            ))}
-          </div>
+          <HowItWorks />
         </section>
 
         {/* ── Final CTA band ───────────────────────────────────────────── */}
