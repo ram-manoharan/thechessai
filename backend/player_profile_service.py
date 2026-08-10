@@ -334,7 +334,15 @@ class PlayerProfileService:
             try:
                 os.chmod(path, 0o755)
                 self.engine = chess.engine.SimpleEngine.popen_uci(path)
-                self.engine.configure({"Threads": 2, "Hash": 128})
+                # Profile builds run up to a few of these concurrently
+                # (routers/profile.py's worker pool), each a separate OS
+                # process — at the old Threads:2/Hash:128 this could add up
+                # to several hundred MB of engine hash tables alone, which
+                # OOM-killed the container on constrained hosting before a
+                # single game finished. Depth is already capped at 8-12 for
+                # batch profile analysis, so a large hash table buys little
+                # here anyway.
+                self.engine.configure({"Threads": 1, "Hash": 32})
                 self.engine_available = True
             except Exception:
                 self.engine = None

@@ -84,7 +84,10 @@ def build_profile_stream(req: ProfileRequest):
             completed = 0
 
             if svc.engine_available and total > 4:
-                workers = min(3, total)
+                # Each worker spawns its own Stockfish process — keep this
+                # low on memory-constrained hosting (see the Hash/Threads
+                # comment in PlayerProfileService.__init__).
+                workers = min(2, total)
 
                 # Create fresh services per worker to avoid stale Stockfish state between requests
                 worker_svcs = [PlayerProfileService() for _ in range(workers)]
