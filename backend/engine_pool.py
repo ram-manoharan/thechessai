@@ -195,6 +195,15 @@ def _replace_dead_engine(dead: chess.engine.SimpleEngine, pool: "_EnginePool") -
         _all_engines.remove(dead)
     except ValueError:
         pass
+    # A "dead" engine (EngineTerminatedError/EngineError) may still have a
+    # lingering OS process -- dropping the Python reference alone doesn't
+    # guarantee it exits. Without this, a crash-and-replace cycle leaks one
+    # subprocess (NNUE net + hash table) per occurrence instead of freeing
+    # the old one's memory.
+    try:
+        dead.quit()
+    except Exception:
+        pass
     replacement = _start_one()
     if replacement:
         _all_engines.append(replacement)

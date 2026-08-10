@@ -96,6 +96,14 @@ def build_profile_stream(req: ProfileRequest):
                     logger.warning("Game %d analysis failed: %s", i + 1, e)
                     moves = []
                 all_moves[i] = moves
+                # analyze_game_moves is the only place that reads g["game"]
+                # (the full parsed chess.pgn.Game move-tree) -- aggregate_stats
+                # below only reads outcome/color/eco/opening_name/elo/headers.
+                # Dropping it here frees each game's tree as we go instead of
+                # holding all `total` of them in memory for the rest of the
+                # request, including through AI report generation (the
+                # longest phase) -- real savings at the 100-game batch cap.
+                g["game"] = None
                 completed += 1
                 yield f"data: {json.dumps({'type': 'progress', 'current': completed, 'total': total})}\n\n"
 
