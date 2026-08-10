@@ -9,11 +9,11 @@ function applyTheme(t: Theme) {
 }
 
 export function useTheme() {
-  const [theme, setTheme] = useState<Theme>("dark");
+  const [theme, setTheme] = useState<Theme>("light");
 
   useEffect(() => {
     const saved = localStorage.getItem("chess-theme") as Theme | null;
-    const initial = saved ?? "dark";
+    const initial = saved ?? "light";
     setTheme(initial);
     applyTheme(initial);
   }, []);
@@ -30,7 +30,7 @@ export function useTheme() {
 export function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const saved = localStorage.getItem("chess-theme") as "dark" | "light" | null;
-    document.documentElement.setAttribute("data-theme", saved ?? "dark");
+    document.documentElement.setAttribute("data-theme", saved ?? "light");
   }, []);
   return createElement("div", { style: { display: "contents" } }, children);
 }

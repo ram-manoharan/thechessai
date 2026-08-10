@@ -22,6 +22,17 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} ${playfair.variable}`} suppressHydrationWarning>
+      <head>
+        {/* Runs before first paint so the page never flashes dark (the
+            unstyled :root default) before React hydrates and ThemeProvider's
+            effect sets the real value — light is now the default theme. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "(function(){try{var t=localStorage.getItem('chess-theme')||'light';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','light');}})();",
+          }}
+        />
+      </head>
       <body className="min-h-screen flex flex-col">
         <AuthProvider>
           <ThemeProvider>
