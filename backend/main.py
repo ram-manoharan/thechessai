@@ -5,16 +5,24 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
 from routers import analysis, imports, profile, user
 import db as db_module
+import engine_pool
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db_module.get_pool()
+    # Eager start (off the event loop -- popen_uci is blocking I/O) instead
+    # of the old lazy-on-first-request singleton: fails fast at deploy time
+    # if Stockfish isn't found, rather than surprising the first user with
+    # both the discovery cost AND a confusing mid-request error.
+    await run_in_threadpool(engine_pool.init_pool)
     yield
+    engine_pool.shutdown()
     await db_module.close_pool()
 
 

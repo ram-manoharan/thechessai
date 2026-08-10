@@ -26,6 +26,16 @@ services:
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
     region: oregon
+    # Currently on "starter" (0.5 vCPU / 512MB) -- the Stockfish engine pool
+    # (backend/engine_pool.py) defaults to STOCKFISH_POOL_SIZE=1, which keeps
+    # behaviour on this plan identical to the old single-engine setup: safe
+    # to deploy before upgrading. To actually use more CPU after bumping this
+    # to "standard" (1 vCPU / 2GB) or higher, set STOCKFISH_POOL_SIZE=2 (or
+    # match vCPU count) and STOCKFISH_HASH_MB=128 as dashboard env vars below
+    # -- see backend/engine_pool.py's docstring for what each controls.
+    # Changing `plan:` here and re-syncing the Blueprint resizes the LIVE
+    # service (real cost change) -- do that deliberately, not as a side
+    # effect of a code deploy.
     plan: starter
     healthCheckPath: /api/health
     envVars:
@@ -53,4 +63,12 @@ services:
       - key: VISION_PROVIDER
         sync: false
       - key: LICHESS_EXPLORER_TOKEN
+        sync: false
+      # Stockfish engine pool sizing (backend/engine_pool.py) — leave unset
+      # (defaults to 1 / 32) on the current "starter" plan. After upgrading
+      # to "standard" (1 vCPU/2GB) or higher, set STOCKFISH_POOL_SIZE=2 and
+      # STOCKFISH_HASH_MB=128 here to actually use the extra CPU/RAM.
+      - key: STOCKFISH_POOL_SIZE
+        sync: false
+      - key: STOCKFISH_HASH_MB
         sync: false

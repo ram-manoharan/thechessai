@@ -8,6 +8,8 @@ from collections import defaultdict
 from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
 
+import engine_pool
+
 load_dotenv()
 
 # Shared opening DB (no Stockfish needed)
@@ -315,39 +317,18 @@ def compute_profile_facts(stats: Dict) -> Dict:
 
 class PlayerProfileService:
 
-    def __init__(self, stockfish_path: Optional[str] = None):
-        # Same discovery logic as chess_analysis.StockfishService — resolves
-        # via PATH (shutil.which), which is what actually finds the engine on
-        # Debian/Render (apt's stockfish package installs to /usr/games, not
-        # /usr/local/bin or /usr/bin). The previous hardcoded candidate list
-        # here didn't match that, and os.chmod on a bare "stockfish" name
-        # checks the current working directory rather than PATH — so every
-        # candidate silently failed in production and every profile build
-        # analysed zero moves without ever raising an error.
-        from chess_analysis import _find_stockfish
-
-        path = stockfish_path or _find_stockfish()
-
-        self.engine = None
-        self.engine_available = False
-        if path:
-            try:
-                os.chmod(path, 0o755)
-                self.engine = chess.engine.SimpleEngine.popen_uci(path)
-                # Profile builds run up to a few of these concurrently
-                # (routers/profile.py's worker pool), each a separate OS
-                # process — at the old Threads:2/Hash:128 this could add up
-                # to several hundred MB of engine hash tables alone, which
-                # OOM-killed the container on constrained hosting before a
-                # single game finished. Depth is already capped at 8-12 for
-                # batch profile analysis, so a large hash table buys little
-                # here anyway.
-                self.engine.configure({"Threads": 1, "Hash": 32})
-                self.engine_available = True
-            except Exception:
-                self.engine = None
-                self.engine_available = False
-
+    def __init__(self):
+        # Engine lifecycle lives in engine_pool.py now, shared by every
+        # analysis path in the app. This class used to spawn its OWN
+        # Stockfish process per instance with no cap on how many could run
+        # concurrently — routers/profile.py creates a fresh
+        # PlayerProfileService() per profile-build request, so several
+        # simultaneous profile builds could each start their own engine
+        # process and reproduce the exact OOM crash loop that was fixed for
+        # the single-game-analysis path, just triggered by concurrent
+        # requests instead of concurrent workers inside one request. Drawing
+        # from the shared, fixed-size pool instead closes that gap.
+        self.engine_available = engine_pool.available()
         self._opening_db = _get_opening_db()
 
     # ── Parsing ──────────────────────────────────────────────────────────────
@@ -430,8 +411,13 @@ class PlayerProfileService:
     # ── Per-game Stockfish analysis ──────────────────────────────────────────
 
     def analyze_game_moves(self, game_dict: Dict, depth: int = 12) -> List[Dict]:
-        """Run Stockfish on every move. Uses pipelining (N+1 calls for N moves)."""
-        if not self.engine_available:
+        """Run Stockfish on every move. Uses pipelining (N+1 calls for N moves).
+        Draws one engine from engine_pool's "batch" pool for the whole game
+        (reserved capacity separate from interactive single-game/position
+        requests, so a long profile build doesn't stall someone's live game
+        review) and routes every call through cached_analyse so positions
+        shared across games/users skip the engine on a cache hit."""
+        if not engine_pool.available():
             return []
 
         game         = game_dict["game"]
@@ -439,62 +425,63 @@ class PlayerProfileService:
         board        = game.board()
         moves_data   = []
 
-        # Pipeline: analyse starting position once, reuse post-move analysis as next pre-move
-        info = self.engine.analyse(board, chess.engine.Limit(depth=depth))
-        score_before  = info["score"].white().score(mate_score=10000)
-        best_move_obj = info.get("pv", [None])[0]
-
-        for move_num, node in enumerate(game.mainline(), start=1):
-            move          = node.move
-            san           = board.san(move)
-            is_white      = (board.turn == chess.WHITE)
-            best_san      = board.san(best_move_obj) if best_move_obj else "N/A"
-            best_move_uci = str(best_move_obj) if best_move_obj else ""
-            fen_before    = board.fen()
-            full_move_num = (move_num + 1) // 2
-            move_color    = chess.WHITE if move_num % 2 == 1 else chess.BLACK
-            is_player_move = (move_color == player_color)
-
-            board.push(move)
-
-            info = self.engine.analyse(board, chess.engine.Limit(depth=depth))
-            score_after   = info["score"].white().score(mate_score=10000)
+        with engine_pool.acquire("batch") as engine:
+            # Pipeline: analyse starting position once, reuse post-move analysis as next pre-move
+            info = engine_pool.cached_analyse(engine, board, depth, 1)[0]
+            score_before  = info["score"].white().score(mate_score=10000)
             best_move_obj = info.get("pv", [None])[0]
 
-            if score_before is not None and score_after is not None:
-                classification, cp_loss = _classify_move_profile(score_before, score_after, is_white)
-            else:
-                classification, cp_loss = "Accurate", 0
+            for move_num, node in enumerate(game.mainline(), start=1):
+                move          = node.move
+                san           = board.san(move)
+                is_white      = (board.turn == chess.WHITE)
+                best_san      = board.san(best_move_obj) if best_move_obj else "N/A"
+                best_move_uci = str(best_move_obj) if best_move_obj else ""
+                fen_before    = board.fen()
+                full_move_num = (move_num + 1) // 2
+                move_color    = chess.WHITE if move_num % 2 == 1 else chess.BLACK
+                is_player_move = (move_color == player_color)
 
-            # Positional context: use the moving player's advantage before the move
-            if score_before is not None:
-                adv = score_before if is_white else -score_before
-                if adv > 150:
-                    pos_context = "winning"
-                elif adv < -150:
-                    pos_context = "losing"
+                board.push(move)
+
+                info = engine_pool.cached_analyse(engine, board, depth, 1)[0]
+                score_after   = info["score"].white().score(mate_score=10000)
+                best_move_obj = info.get("pv", [None])[0]
+
+                if score_before is not None and score_after is not None:
+                    classification, cp_loss = _classify_move_profile(score_before, score_after, is_white)
                 else:
-                    pos_context = "equal"
-            else:
-                pos_context = "unknown"
+                    classification, cp_loss = "Accurate", 0
 
-            moves_data.append({
-                "move_number":   full_move_num,
-                "san":           san,
-                "best_san":      best_san,
-                "best_move_uci": best_move_uci,
-                "fen":           fen_before,
-                "cp_loss":       cp_loss,
-                "score_before":  score_before,
-                "score_after":   score_after,
-                "classification": classification,
-                "is_player_move": is_player_move,
-                "phase":         _get_phase_material(board, full_move_num),
-                "pos_context":   pos_context,
-                "is_theory_zone": full_move_num <= OPENING_THEORY_CUTOFF,
-            })
+                # Positional context: use the moving player's advantage before the move
+                if score_before is not None:
+                    adv = score_before if is_white else -score_before
+                    if adv > 150:
+                        pos_context = "winning"
+                    elif adv < -150:
+                        pos_context = "losing"
+                    else:
+                        pos_context = "equal"
+                else:
+                    pos_context = "unknown"
 
-            score_before = score_after
+                moves_data.append({
+                    "move_number":   full_move_num,
+                    "san":           san,
+                    "best_san":      best_san,
+                    "best_move_uci": best_move_uci,
+                    "fen":           fen_before,
+                    "cp_loss":       cp_loss,
+                    "score_before":  score_before,
+                    "score_after":   score_after,
+                    "classification": classification,
+                    "is_player_move": is_player_move,
+                    "phase":         _get_phase_material(board, full_move_num),
+                    "pos_context":   pos_context,
+                    "is_theory_zone": full_move_num <= OPENING_THEORY_CUTOFF,
+                })
+
+                score_before = score_after
 
         return moves_data
 
@@ -1017,8 +1004,9 @@ class PlayerProfileService:
             return {"error": str(e)}
 
     def close(self):
-        if self.engine:
-            try:
-                self.engine.quit()
-            except Exception:
-                pass
+        """No-op now that engines are borrowed from engine_pool for the
+        duration of each analyze_game_moves call and returned immediately
+        after, rather than owned for this instance's whole lifetime. Kept
+        as a harmless method so existing callers (routers/profile.py's
+        `finally: svc.close()`) don't need to change."""
+        pass

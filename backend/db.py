@@ -26,7 +26,13 @@ async def get_pool() -> asyncpg.Pool:
         _pool = await asyncpg.create_pool(
             dsn=dsn,
             min_size=2,
-            max_size=10,
+            # Bumped from 10 -- the engine pool (see engine_pool.py) now lets
+            # several analysis requests run genuinely concurrently instead of
+            # queueing one at a time, so more requests can be mid-flight and
+            # touching the DB (mistake_pattern/analyzed_game writes, profile
+            # cache reads) at once. Cheap to raise: these are pooled via
+            # PgBouncer already, and idle connections cost little.
+            max_size=20,
             command_timeout=10,
         )
         logger.info("Postgres pool created (app schema)")

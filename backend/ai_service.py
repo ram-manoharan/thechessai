@@ -203,6 +203,41 @@ class AIService:
 
     # ── Internal helpers ──────────────────────────────────────────────────
 
+    def _create_completion(self, *, client=None, max_retries: int = 3, **kwargs):
+        """Drop-in wrapper around `<client>.chat.completions.create(**kwargs)`
+        with exponential backoff on rate limits and transient server/network
+        errors -- at higher request volume, free/low-tier LLM providers
+        (Groq, Together) hitting their own rate limits should surface as a
+        brief delay to the user, not an outright failure. Defaults to
+        self.client; pass client=self.vision_client for vision calls.
+        Anything not a rate-limit/transient error (bad request, auth
+        failure, etc.) raises immediately -- retrying those would just
+        waste time repeating a call that can never succeed.
+        """
+        import time
+        from openai import RateLimitError, APIStatusError, APIConnectionError, APITimeoutError
+
+        target = client if client is not None else self.client
+        delay = 1.0
+        last_exc = None
+        for attempt in range(max_retries):
+            try:
+                return target.chat.completions.create(**kwargs)
+            except (RateLimitError, APIConnectionError, APITimeoutError) as e:
+                last_exc = e
+            except APIStatusError as e:
+                if e.status_code < 500:  # 4xx other than 429 won't succeed on retry
+                    raise
+                last_exc = e
+            if attempt < max_retries - 1:
+                logger.warning(
+                    "LLM call failed (attempt %d/%d), retrying in %.1fs: %s",
+                    attempt + 1, max_retries, delay, last_exc,
+                )
+                time.sleep(delay)
+                delay *= 2
+        raise last_exc
+
     def _format_engine_context(self, moves_data: list, player_color: str) -> str:
         """Summarise Stockfish findings for the LLM prompt."""
         player_cap = player_color.capitalize()
@@ -361,7 +396,7 @@ Requirements:
 - All move references must exist in ENGINE DATA
 - Return valid JSON only — no extra text"""
 
-            response = self.client.chat.completions.create(
+            response = self._create_completion(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=2048,
@@ -448,7 +483,7 @@ Return ONLY valid JSON — no markdown fences, no extra text:
 }}"""
 
         try:
-            response = self.client.chat.completions.create(
+            response = self._create_completion(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=512,
@@ -505,7 +540,7 @@ Answer the student's questions about this position conversationally, in plain te
 
         messages = [{"role": "system", "content": system_prompt}] + history[-10:]
         try:
-            response = self.client.chat.completions.create(
+            response = self._create_completion(
                 model=self.model_name,
                 messages=messages,
                 max_tokens=400,
@@ -610,7 +645,7 @@ Use "I" as Coach Spark talking to {name}.
 
 Coach Spark:"""
 
-            response = self.client.chat.completions.create(
+            response = self._create_completion(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=2000,
@@ -748,7 +783,7 @@ Respond with ONLY valid JSON — no markdown, no extra text:
 }}"""
 
         try:
-            response = self.client.chat.completions.create(
+            response = self._create_completion(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=1800,
@@ -797,7 +832,7 @@ Respond with ONLY valid JSON — no markdown, no extra text:
     def _vision_call(self, b64: str, mime: str, prompt: str,
                      max_tokens: int = 800) -> str:
         """Single vision API call — returns raw response text."""
-        response = self.vision_client.chat.completions.create(
+        response = self._create_completion(client=self.vision_client, 
             model=self.vision_model,
             messages=[{
                 "role": "user",
@@ -907,7 +942,7 @@ Respond with ONLY valid JSON:
 
         try:
             # Use the text model for pass 2 — it's better at structured reasoning
-            p2_response = self.client.chat.completions.create(
+            p2_response = self._create_completion(
                 model=self.model_name,
                 messages=[{"role": "user", "content": pass2_prompt}],
                 max_tokens=1000,
@@ -1263,7 +1298,7 @@ data. Close with one specific measurable challenge.
 Grandmaster Coach Analysis:"""
 
         try:
-            response = self.client.chat.completions.create(
+            response = self._create_completion(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=8000,

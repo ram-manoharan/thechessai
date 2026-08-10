@@ -70,8 +70,16 @@ def set_cached_stats_sync(user_id: str, provider: str, stats: dict) -> None:
         logger.warning("Redis sync write failed for %s/%s: %s", user_id, provider, e)
 
 
-async def get_or_set(key: str, compute: Callable[[], Awaitable[Any]]) -> Any:
-    """Cache-aside: return the cached value if present, else compute, cache, return."""
+async def get_or_set(
+    key: str, compute: Callable[[], Awaitable[Any]], ttl_seconds: Optional[int] = None
+) -> Any:
+    """Cache-aside: return the cached value if present, else compute, cache, return.
+    `ttl_seconds` overrides the default jittered ~1h TTL for callers that want
+    something shorter (e.g. import.py's proxied external-API responses,
+    where staleness of more than a few minutes matters to the user). If
+    `compute()` raises, nothing is cached and the exception propagates
+    normally -- only successful results are ever cached.
+    """
     client = get_client()
     try:
         cached = await client.get(key)
@@ -83,7 +91,7 @@ async def get_or_set(key: str, compute: Callable[[], Awaitable[Any]]) -> Any:
     value = await compute()
 
     try:
-        await client.set(key, json.dumps(value), ex=_jittered_ttl())
+        await client.set(key, json.dumps(value), ex=ttl_seconds if ttl_seconds is not None else _jittered_ttl())
     except Exception as e:
         logger.warning("Redis write failed for %s (serving uncached): %s", key, e)
 
