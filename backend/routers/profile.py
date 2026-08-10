@@ -2,7 +2,6 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from functools import lru_cache
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 import json
 import logging
@@ -58,7 +57,6 @@ def build_profile_stream(req: ProfileRequest):
                 return
 
         svc = PlayerProfileService()
-        worker_svcs: list = []
         try:
             all_games = svc.parse_games(req.pgn, req.player_name)
             if not all_games:
@@ -83,44 +81,23 @@ def build_profile_stream(req: ProfileRequest):
             all_moves: list = [[] for _ in range(total)]
             completed = 0
 
-            if svc.engine_available and total > 4:
-                # Each worker spawns its own Stockfish process — keep this
-                # low on memory-constrained hosting (see the Hash/Threads
-                # comment in PlayerProfileService.__init__).
-                workers = min(2, total)
-
-                # Create fresh services per worker to avoid stale Stockfish state between requests
-                worker_svcs = [PlayerProfileService() for _ in range(workers)]
-                import threading
-                _worker_idx = threading.local()
-
-                def _analyze(idx: int, game, worker_id: int):
-                    return idx, worker_svcs[worker_id].analyze_game_moves(game, depth=depth)
-
-                with ThreadPoolExecutor(max_workers=workers) as pool:
-                    futures = {
-                        pool.submit(_analyze, i, g, i % workers): i
-                        for i, g in enumerate(games)
-                    }
-                    for fut in as_completed(futures):
-                        try:
-                            idx, moves = fut.result()
-                            all_moves[idx] = moves
-                        except Exception as e:
-                            logger.warning("Game analysis failed for index %s: %s", futures[fut], e)
-                            # Keep empty list for this game; don't abort the whole batch
-                        completed += 1
-                        yield f"data: {json.dumps({'type': 'progress', 'current': completed, 'total': total})}\n\n"
-            else:
-                for i, g in enumerate(games):
-                    try:
-                        moves = svc.analyze_game_moves(g, depth=depth) if svc.engine_available else []
-                    except Exception as e:
-                        logger.warning("Game %d analysis failed: %s", i + 1, e)
-                        moves = []
-                    all_moves[i] = moves
-                    completed += 1
-                    yield f"data: {json.dumps({'type': 'progress', 'current': completed, 'total': total})}\n\n"
+            # Deliberately sequential, one Stockfish process for the whole
+            # batch (svc.engine, spawned once above) — a previous version
+            # ran 2-3 concurrent worker processes here, each loading its own
+            # copy of Stockfish's NNUE evaluation network into memory on top
+            # of its hash table. That's fixed per-process overhead beyond
+            # anything the Hash config controls, and it was enough to
+            # OOM-kill the container on a 512MB instance before a single
+            # game finished analysing. Slower, but it actually completes.
+            for i, g in enumerate(games):
+                try:
+                    moves = svc.analyze_game_moves(g, depth=depth) if svc.engine_available else []
+                except Exception as e:
+                    logger.warning("Game %d analysis failed: %s", i + 1, e)
+                    moves = []
+                all_moves[i] = moves
+                completed += 1
+                yield f"data: {json.dumps({'type': 'progress', 'current': completed, 'total': total})}\n\n"
 
             stats = svc.aggregate_stats(games, all_moves, req.player_name)
             yield f"data: {json.dumps({'type': 'stats', 'stats': stats, 'games_parsed': total})}\n\n"
@@ -138,12 +115,6 @@ def build_profile_stream(req: ProfileRequest):
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
         finally:
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
-            # Clean up all Stockfish subprocesses
-            for wsvc in worker_svcs:
-                try:
-                    wsvc.close()
-                except Exception:
-                    pass
             try:
                 svc.close()
             except Exception:
