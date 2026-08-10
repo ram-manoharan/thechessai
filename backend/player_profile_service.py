@@ -316,27 +316,29 @@ def compute_profile_facts(stats: Dict) -> Dict:
 class PlayerProfileService:
 
     def __init__(self, stockfish_path: Optional[str] = None):
-        candidates = []
-        if stockfish_path:
-            candidates.append(stockfish_path)
-        candidates += [
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "stockfish_14_x64_popcnt"),
-            "/usr/local/bin/stockfish",
-            "/usr/bin/stockfish",
-            "stockfish",
-        ]
+        # Same discovery logic as chess_analysis.StockfishService — resolves
+        # via PATH (shutil.which), which is what actually finds the engine on
+        # Debian/Render (apt's stockfish package installs to /usr/games, not
+        # /usr/local/bin or /usr/bin). The previous hardcoded candidate list
+        # here didn't match that, and os.chmod on a bare "stockfish" name
+        # checks the current working directory rather than PATH — so every
+        # candidate silently failed in production and every profile build
+        # analysed zero moves without ever raising an error.
+        from chess_analysis import _find_stockfish
+
+        path = stockfish_path or _find_stockfish()
 
         self.engine = None
         self.engine_available = False
-        for path in candidates:
+        if path:
             try:
                 os.chmod(path, 0o755)
                 self.engine = chess.engine.SimpleEngine.popen_uci(path)
                 self.engine.configure({"Threads": 2, "Hash": 128})
                 self.engine_available = True
-                break
             except Exception:
-                continue
+                self.engine = None
+                self.engine_available = False
 
         self._opening_db = _get_opening_db()
 
