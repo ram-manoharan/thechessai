@@ -549,7 +549,13 @@ class StockfishService:
             if not os.access(self._sf_path, os.X_OK):
                 os.chmod(self._sf_path, 0o755)
             self.engine = chess.engine.SimpleEngine.popen_uci(self._sf_path)
-            self.engine.configure({"Threads": 1, "Hash": 128})
+            # This engine is a singleton, alive for the whole process
+            # lifetime (not per-request) — its Hash table is permanent
+            # resident memory on top of whatever NNUE net Stockfish loads.
+            # On a 512MB container that's a meaningful chunk of the budget
+            # before a single request even arrives; 32MB doesn't materially
+            # hurt search quality at the depths this app uses (12-18).
+            self.engine.configure({"Threads": 1, "Hash": 32})
             self.available = True
             logger.info("Stockfish initialised: %s", self._sf_path)
             return True
