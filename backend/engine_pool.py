@@ -17,27 +17,29 @@ concurrent engine usage across the entire app is capped at that number no
 matter which endpoint is asking, so raising it is a single env var change
 after upgrading the instance, not a per-service tuning exercise every time.
 
-Split into two logical pools (interactive vs. batch) so a long-running
-player-profile build can't starve someone's live game review of the only
-available engine, loosely mirroring Lichess's fishnet user-queue/
-system-queue split — at POOL_SIZE=1 there's nothing to split, so both share
-the single engine exactly like the old singleton did (this is the default,
-safe on the current 512MB/0.5vCPU Render plan). At POOL_SIZE>=2, half go to
-each pool (batch borrows an idle interactive engine as a last resort so
-long queues don't stall a batch job outright, but interactive requests
-always get first claim on their reserved slot).
+One shared pool, not per-endpoint ones — every waiter is served in priority
+order (interactive requests, i.e. someone actively watching a spinner, ahead
+of batch/player-profile-build requests, which can tolerate a short queue),
+loosely mirroring Lichess's fishnet user-queue/system-queue split. This
+holds even at POOL_SIZE=1 (the default, safe on the current Render plan):
+a profile build mid-search still finishes its current position before
+yielding the engine (Stockfish calls aren't preemptible), but any
+interactive request queued behind it jumps ahead of any other queued batch
+request for the engine's next release.
 
-Uses a thread-safe queue.Queue rather than asyncio primitives because every
-call site here runs inside a worker thread (FastAPI's sync `def` routes and
-explicit run_in_threadpool calls), not directly on the event loop.
+Uses threading primitives rather than asyncio ones because every call site
+here runs inside a worker thread (FastAPI's sync `def` routes and explicit
+run_in_threadpool calls), not directly on the event loop.
 """
 import os
 import json
 import time
+import heapq
 import queue
 import shutil
 import platform
 import logging
+import itertools
 import threading
 import contextlib
 from typing import Optional, List
@@ -65,12 +67,64 @@ MAX_ANALYSE_SECONDS = _MAX_ANALYSE_SECONDS  # public alias for callers that bypa
 # waits before giving up and just computing it itself.
 _COALESCE_WAIT_SECONDS = float(os.environ.get("STOCKFISH_COALESCE_WAIT", "6.0"))
 
+class _EnginePool:
+    """A bag of engines with priority-fair blocking acquisition: whichever
+    waiter has the lowest `priority` number gets the next available engine,
+    breaking ties in arrival order. Plain threading.Condition, not
+    queue.Queue, because queue.Queue has no concept of priority among
+    waiters -- only FIFO."""
+
+    def __init__(self) -> None:
+        self._cond = threading.Condition(threading.Lock())
+        self._available: List[chess.engine.SimpleEngine] = []
+        self._waiters: list = []  # heap of [priority, seq] -- seq breaks ties in arrival order
+        self._seq = itertools.count()
+
+    def put(self, engine: chess.engine.SimpleEngine) -> None:
+        with self._cond:
+            self._available.append(engine)
+            self._cond.notify_all()
+
+    def get(self, priority: int = 0, timeout: Optional[float] = None) -> chess.engine.SimpleEngine:
+        with self._cond:
+            entry = [priority, next(self._seq)]
+            heapq.heappush(self._waiters, entry)
+            deadline = None if timeout is None else time.monotonic() + timeout
+            try:
+                while True:
+                    # Only the highest-priority (lowest-sorting) current
+                    # waiter is allowed to take an available engine, so an
+                    # interactive request that arrives after a queued batch
+                    # request still goes first.
+                    if self._available and self._waiters[0] is entry:
+                        heapq.heappop(self._waiters)
+                        return self._available.pop()
+                    remaining = None if deadline is None else deadline - time.monotonic()
+                    if remaining is not None and remaining <= 0:
+                        raise queue.Empty
+                    self._cond.wait(timeout=remaining)
+            except BaseException:
+                try:
+                    self._waiters.remove(entry)
+                    heapq.heapify(self._waiters)
+                except ValueError:
+                    pass
+                raise
+
+    def size(self) -> int:
+        with self._cond:
+            return len(self._available)
+
+    def drain(self) -> None:
+        with self._cond:
+            self._available.clear()
+
+
 _lock = threading.Lock()
 _initialized = False
 _sf_path: Optional[str] = None
 _all_engines: List[chess.engine.SimpleEngine] = []
-_interactive_pool: "queue.Queue[chess.engine.SimpleEngine]" = queue.Queue()
-_batch_pool: "queue.Queue[chess.engine.SimpleEngine]" = queue.Queue()
+_pool = _EnginePool()
 
 
 def find_stockfish() -> Optional[str]:
@@ -116,27 +170,7 @@ def init_pool() -> int:
             eng = _start_one()
             if eng:
                 _all_engines.append(eng)
-
-        # Split into interactive/batch only when there's enough to split;
-        # at POOL_SIZE=1, _batch_pool is made THE SAME queue object as
-        # _interactive_pool (not a second queue independently seeded with
-        # the same engine) -- putting one engine into two separate queues
-        # would let two threads each successfully `get()` a reference to
-        # it at once, breaking the mutual exclusion the pool exists to
-        # provide. Aliasing the queue itself keeps a single physical slot,
-        # matching the pre-pool singleton's actual behaviour exactly.
-        global _batch_pool
-        if len(_all_engines) >= 2:
-            batch_n = len(_all_engines) // 2
-            interactive_n = len(_all_engines) - batch_n
-            for eng in _all_engines[:interactive_n]:
-                _interactive_pool.put(eng)
-            for eng in _all_engines[interactive_n:]:
-                _batch_pool.put(eng)
-        else:
-            _batch_pool = _interactive_pool
-            for eng in _all_engines:
-                _interactive_pool.put(eng)
+                _pool.put(eng)
 
         _initialized = True
         if _all_engines:
@@ -155,7 +189,7 @@ def available() -> bool:
     return len(_all_engines) > 0
 
 
-def _replace_dead_engine(dead: chess.engine.SimpleEngine, pool: "queue.Queue") -> None:
+def _replace_dead_engine(dead: chess.engine.SimpleEngine, pool: "_EnginePool") -> None:
     logger.warning("Pooled Stockfish engine crashed -- replacing it.")
     try:
         _all_engines.remove(dead)
@@ -167,14 +201,25 @@ def _replace_dead_engine(dead: chess.engine.SimpleEngine, pool: "queue.Queue") -
         pool.put(replacement)
 
 
+_DEFAULT_ACQUIRE_TIMEOUT_SECONDS = float(os.environ.get("STOCKFISH_ACQUIRE_TIMEOUT", "25"))
+
+
 @contextlib.contextmanager
 def acquire(kind: str = "interactive", timeout: Optional[float] = None):
     """Block (thread-safely) until an engine is free, yield it, return it to
-    its pool afterward -- even on exception. `kind` is "interactive" (single
-    game/position/puzzle requests -- someone is actively waiting) or "batch"
-    (player-profile builds -- tolerant of a short queue). Falls back to the
-    other pool if its own is momentarily empty, so neither type of request
-    ever deadlocks waiting on a split that only exists at POOL_SIZE>=2.
+    its pool afterward -- ALWAYS, on any exception, not just an engine
+    crash. `kind` is "interactive" (single game/position/puzzle requests --
+    someone is actively waiting) or "batch" (player-profile builds --
+    tolerant of a short queue); when POOL_SIZE>=2 an interactive request
+    waiting on a busy shared pool always gets served ahead of a waiting
+    batch request (see _EnginePool.get), so a long profile build can't
+    stall someone's live game review even though they're contending for
+    the same engines at POOL_SIZE<2.
+
+    Defaults to a bounded wait (STOCKFISH_ACQUIRE_TIMEOUT, 25s) rather than
+    an unbounded one -- if something upstream is wrong (pool exhausted,
+    engine leaked), callers get a clear error instead of a request that
+    hangs forever.
 
     Note: a caller that loses the coalescing race inside cached_analyse()
     holds its engine slot idle while it polls rather than releasing it
@@ -189,40 +234,45 @@ def acquire(kind: str = "interactive", timeout: Optional[float] = None):
     if not _all_engines:
         raise RuntimeError("Stockfish engine is not available. Install via: brew install stockfish")
 
-    primary = _interactive_pool if kind == "interactive" else _batch_pool
-    fallback = _batch_pool if kind == "interactive" else _interactive_pool
+    wait_timeout = _DEFAULT_ACQUIRE_TIMEOUT_SECONDS if timeout is None else timeout
+    priority = 0 if kind == "interactive" else 1  # lower = served first
 
-    engine = None
     try:
-        engine = primary.get(timeout=0.05)
+        engine = _pool.get(priority=priority, timeout=wait_timeout)
     except queue.Empty:
-        try:
-            engine = fallback.get(timeout=0.05)
-        except queue.Empty:
-            engine = primary.get(timeout=timeout)  # now just wait on the primary pool
+        raise RuntimeError(
+            f"Timed out after {wait_timeout}s waiting for a free Stockfish engine "
+            "(pool exhausted or a prior request never returned one)."
+        )
 
+    dead = False
     try:
         yield engine
-    except chess.engine.EngineTerminatedError:
-        _replace_dead_engine(engine, primary)
+    except (chess.engine.EngineTerminatedError, chess.engine.EngineError):
+        dead = True
         raise
-    else:
-        primary.put(engine)
+    finally:
+        # Runs on ANY exit from the `with` block -- success, an exception we
+        # re-raise above, or any OTHER exception type -- so a checked-out
+        # engine is never silently lost from the pool. Losing this even
+        # once at POOL_SIZE=1 means every subsequent request hangs forever
+        # waiting on an engine nothing will ever return.
+        if dead:
+            _replace_dead_engine(engine, _pool)
+        else:
+            _pool.put(engine)
 
 
 def shutdown() -> None:
-    for pool in (_interactive_pool, _batch_pool):
-        while not pool.empty():
-            try:
-                pool.get_nowait()
-            except queue.Empty:
-                break
+    global _initialized
+    _pool.drain()
     for eng in _all_engines:
         try:
             eng.quit()
         except Exception:
             pass
     _all_engines.clear()
+    _initialized = False
 
 
 # ─────────────────────── Cached / coalesced analysis ─────────────────────────
