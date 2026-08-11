@@ -182,19 +182,19 @@ export function Navbar() {
     >
       {/* Brand */}
       <Link href="/" className="flex items-center gap-2.5 group">
-        {/* Neural node icon */}
+        {/* Knight mark */}
         <div style={{ position: "relative", width: 22, height: 22, flexShrink: 0, animation: analyzing ? "navbar-logo-pulse 1.4s ease-in-out infinite" : "none" }}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-            <circle cx="12" cy="12" r="3.5" fill="var(--gold)" opacity="0.95" />
-            <circle cx="12" cy="12" r="7" stroke="rgba(201,162,68,0.3)" strokeWidth="1" fill="none" />
-            <circle cx="12" cy="4"  r="1.5" fill="rgba(91,142,245,0.8)" />
-            <circle cx="12" cy="20" r="1.5" fill="rgba(91,142,245,0.8)" />
-            <circle cx="4"  cy="12" r="1.5" fill="rgba(91,142,245,0.8)" />
-            <circle cx="20" cy="12" r="1.5" fill="rgba(91,142,245,0.8)" />
-            <line x1="12" y1="8.5"  x2="12" y2="5.5"  stroke="rgba(201,162,68,0.4)" strokeWidth="0.8" />
-            <line x1="12" y1="15.5" x2="12" y2="18.5" stroke="rgba(201,162,68,0.4)" strokeWidth="0.8" />
-            <line x1="8.5"  y1="12" x2="5.5"  y2="12" stroke="rgba(201,162,68,0.4)" strokeWidth="0.8" />
-            <line x1="15.5" y1="12" x2="18.5" y2="12" stroke="rgba(201,162,68,0.4)" strokeWidth="0.8" />
+          <svg width="22" height="22" viewBox="-2 4 174 240">
+            <defs>
+              <linearGradient id="navbarKnightGold" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stopColor="var(--gold-light)" />
+                <stop offset="1" stopColor="var(--gold-dim)" />
+              </linearGradient>
+            </defs>
+            <path
+              d="M4,138 C24,120 46,84 66,58 C72,48 76,38 82,30 L94,8 L110,32 C118,36 128,40 138,44 C158,64 166,96 166,96 C170,118 169,140 165,158 L156,178 L145,196 L160,218 L160,242 L42,242 L42,218 L55,196 C46,184 41,176 39,168 C34,158 32,150 32,142 L38,132 L18,136 Z"
+              fill="url(#navbarKnightGold)"
+            />
           </svg>
         </div>
         <span style={{ lineHeight: 1, letterSpacing: "-0.02em" }} className="text-[17px] tracking-tight group-hover:opacity-90 transition-opacity">
