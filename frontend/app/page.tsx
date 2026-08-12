@@ -339,21 +339,38 @@ export default function Home() {
           <p style={{ color: "var(--text-muted)", fontSize: 11, letterSpacing: "0.04em" }}>
             {"Powered by Stockfish · AI coaching · Built for chess learners"}
           </p>
-          <p
+          <div
             style={{
-              color: "var(--text-muted)", fontSize: 11, letterSpacing: "0.02em", marginTop: 4,
-              display: "flex", alignItems: "center", justifyContent: "center", flexWrap: "wrap", gap: "6px 10px",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              gap: 20, marginTop: 6, flexWrap: "wrap",
             }}
           >
-            <span>
-              {"Created by Ram SM · "}
-              <a href="mailto:ramengineer2006@gmail.com" style={{ color: "var(--gold)", textDecoration: "none" }} className="hover:opacity-80">
+            <div style={{ textAlign: "center" }}>
+              <p style={{ color: "var(--gold)", fontSize: 9, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 4 }}>
+                Creator
+              </p>
+              <p style={{ color: "var(--text-secondary)", fontSize: 12, fontWeight: 600, marginBottom: 2 }}>
+                Ram SM
+              </p>
+              <a href="mailto:ramengineer2006@gmail.com" style={{ color: "var(--text-muted)", fontSize: 11, textDecoration: "none" }} className="hover:opacity-80">
                 ramengineer2006@gmail.com
               </a>
-            </span>
-            <span style={{ color: "var(--gold)", fontSize: 12 }} aria-hidden="true">♛</span>
-            <span>{"Chess Advisor: WCM Savetha CH (FIDE: 5042224)"}</span>
-          </p>
+            </div>
+
+            <span style={{ color: "var(--gold)", fontSize: 22, lineHeight: 1 }} aria-hidden="true">♛</span>
+
+            <div style={{ textAlign: "center" }}>
+              <p style={{ color: "var(--gold)", fontSize: 9, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 4 }}>
+                Chess Advisor
+              </p>
+              <p style={{ color: "var(--text-secondary)", fontSize: 12, fontWeight: 600, marginBottom: 2 }}>
+                Savetha CH
+              </p>
+              <p style={{ color: "var(--text-muted)", fontSize: 11 }}>
+                WCM · FIDE: 5042224
+              </p>
+            </div>
+          </div>
         </footer>
       </main>
 
