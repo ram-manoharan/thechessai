@@ -96,7 +96,7 @@ export default function Home() {
             }}
           />
 
-          <div className="relative max-w-3xl mx-auto px-6 pt-24 text-center">
+          <div className="relative max-w-3xl mx-auto px-6 pt-24 pb-20 text-center">
 
             {/* Badge */}
             <div
@@ -147,30 +147,30 @@ export default function Home() {
             </p>
 
             <HeroCTA />
-          </div>
 
-          {/* Ask-the-coach demo, side by side with How it works on wide screens */}
-          <div className="relative max-w-6xl mx-auto px-6 pt-14 pb-20">
-            <div className="grid grid-cols-1 lg:grid-cols-[480px_1fr] gap-x-16 gap-y-14 items-start">
-              <div className="mx-auto lg:mx-0 text-left w-full" style={{ maxWidth: 480 }}>
-                <Reveal delay={0.15}>
-                  <HeroChatDemo />
-                </Reveal>
-              </div>
-
-              <div className="text-left">
-                <Reveal>
-                  <p style={{ color: "var(--accent-blue)", fontSize: 11, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", marginBottom: 8 }}>
-                    How it works
-                  </p>
-                  <h2 style={{ fontFamily: "var(--font-display)", fontSize: "clamp(20px, 2.2vw, 24px)", fontWeight: 600, color: "var(--text-primary)", letterSpacing: "-0.02em", marginBottom: 28 }}>
-                    From your next game to real improvement.
-                  </h2>
-                </Reveal>
-                <HowItWorks />
-              </div>
+            <div className="mt-14 mx-auto text-left" style={{ maxWidth: 480 }}>
+              <Reveal delay={0.15}>
+                <HeroChatDemo />
+              </Reveal>
             </div>
+
           </div>
+        </section>
+
+        {/* ── How it works ─────────────────────────────────────────────── */}
+        <section className="max-w-5xl mx-auto px-6 pt-4 pb-14">
+          <Reveal>
+            <div style={{ textAlign: "center", marginBottom: 36 }}>
+              <p style={{ color: "var(--accent-blue)", fontSize: 11, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", marginBottom: 8 }}>
+                How it works
+              </p>
+              <h2 style={{ fontFamily: "var(--font-display)", fontSize: "clamp(20px, 2.5vw, 26px)", fontWeight: 600, color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
+                From your next game to real improvement.
+              </h2>
+            </div>
+          </Reveal>
+
+          <HowItWorks />
         </section>
 
         {/* ── Divider ────────────────────────────────────────────────────── */}

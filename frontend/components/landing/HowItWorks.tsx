@@ -58,7 +58,7 @@ const PIPELINE = [
   },
 ];
 
-const COLS = 2;
+const COLS = 3;
 const STEP_MS = 2000;
 
 export function HowItWorks() {
@@ -99,7 +99,7 @@ export function HowItWorks() {
 
   return (
     <div ref={ref}>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-12">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-8 gap-y-12">
         {PIPELINE.map((step, i) => {
           const isActive = !reducedMotion && i === active;
           const sameRowNext = i % COLS !== COLS - 1;
