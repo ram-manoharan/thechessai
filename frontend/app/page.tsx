@@ -157,6 +157,22 @@ export default function Home() {
           </div>
         </section>
 
+        {/* ── How it works ─────────────────────────────────────────────── */}
+        <section className="max-w-5xl mx-auto px-6 pt-4 pb-14">
+          <Reveal>
+            <div style={{ textAlign: "center", marginBottom: 36 }}>
+              <p style={{ color: "var(--accent-blue)", fontSize: 11, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", marginBottom: 8 }}>
+                How it works
+              </p>
+              <h2 style={{ fontFamily: "var(--font-display)", fontSize: "clamp(20px, 2.5vw, 26px)", fontWeight: 600, color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
+                From your next game to real improvement.
+              </h2>
+            </div>
+          </Reveal>
+
+          <HowItWorks />
+        </section>
+
         {/* ── Divider ────────────────────────────────────────────────────── */}
         <div className="max-w-4xl mx-auto px-6">
           <div className="divider-gold" />
@@ -288,22 +304,6 @@ export default function Home() {
               </Reveal>
             ))}
           </div>
-        </section>
-
-        {/* ── How it works ─────────────────────────────────────────────── */}
-        <section className="max-w-5xl mx-auto px-6 py-14">
-          <Reveal>
-            <div style={{ textAlign: "center", marginBottom: 36 }}>
-              <p style={{ color: "var(--accent-blue)", fontSize: 11, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", marginBottom: 8 }}>
-                How it works
-              </p>
-              <h2 style={{ fontFamily: "var(--font-display)", fontSize: "clamp(20px, 2.5vw, 26px)", fontWeight: 600, color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
-                From your next game to real improvement.
-              </h2>
-            </div>
-          </Reveal>
-
-          <HowItWorks />
         </section>
 
         {/* ── Final CTA band ───────────────────────────────────────────── */}
