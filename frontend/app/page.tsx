@@ -71,6 +71,13 @@ const FEATURES = [
     accent: "var(--accent-blue)",
     isAI: false,
   },
+  {
+    icon: "⬇",
+    title: "AI-Annotated PGN Export",
+    desc: "Download your analysed game as a fully annotated PGN — NAG symbols, engine evals, and AI coaching notes embedded. Open it in Chessbase, Lichess, or any chess software for offline study.",
+    accent: "var(--gold)",
+    isAI: true,
+  },
 ];
 
 export default function Home() {
@@ -357,7 +364,19 @@ export default function Home() {
               </a>
             </div>
 
-            <span style={{ color: "var(--gold)", fontSize: 22, lineHeight: 1 }} aria-hidden="true">♛</span>
+            <svg width="18" height="24" viewBox="0 0 100 130" aria-hidden="true" style={{ color: "var(--gold)", flexShrink: 0 }}>
+              <circle cx="50" cy="13" r="7" fill="currentColor" />
+              <polygon points="15,44 22,20 29,44" fill="currentColor" />
+              <polygon points="32,44 39,16 46,44" fill="currentColor" />
+              <polygon points="43,44 50,24 57,44" fill="currentColor" />
+              <polygon points="54,44 61,16 68,44" fill="currentColor" />
+              <polygon points="71,44 78,20 85,44" fill="currentColor" />
+              <path d="M14,44 L86,44 L80,58 L20,58 Z" fill="currentColor" />
+              <path d="M38,58 L62,58 L58,86 L42,86 Z" fill="currentColor" />
+              <ellipse cx="50" cy="88" rx="24" ry="9" fill="currentColor" />
+              <path d="M26,92 L74,92 L92,114 L8,114 Z" fill="currentColor" />
+              <rect x="4" y="112" width="92" height="10" rx="3" fill="currentColor" />
+            </svg>
 
             <div style={{ textAlign: "center" }}>
               <p style={{ color: "var(--gold)", fontSize: 9, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 4 }}>

@@ -192,11 +192,11 @@ export async function fetchPuzzles(pgn: string, playerColor: "white" | "black") 
   }) as Promise<{ puzzles: PuzzleData[] }>;
 }
 
-export async function fetchAnnotatedPgn(pgn: string, movesData: MoveData[]) {
+export async function fetchAnnotatedPgn(pgn: string, movesData: MoveData[], keyMoments: object[] = []) {
   return apiFetch(`${BASE}/api/analysis/game/annotated-pgn`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pgn, moves_data: movesData }),
+    body: JSON.stringify({ pgn, moves_data: movesData, key_moments: keyMoments }),
   }) as Promise<{ pgn: string }>;
 }
 

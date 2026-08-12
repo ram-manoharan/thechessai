@@ -36,6 +36,7 @@ class PositionRequest(BaseModel):
 class AnnotatedPgnRequest(BaseModel):
     pgn: str
     moves_data: list
+    key_moments: list = []
 
 
 class PuzzleRequest(BaseModel):
@@ -216,9 +217,9 @@ def analyze_position(req: PositionRequest):
 
 @router.post("/game/annotated-pgn")
 def get_annotated_pgn(req: AnnotatedPgnRequest):
-    """Return the game PGN with engine classification comments embedded."""
+    """Return PGN with NAG symbols, engine eval annotations, and AI coaching notes embedded."""
     try:
-        pgn = generate_annotated_pgn(req.pgn, req.moves_data)
+        pgn = generate_annotated_pgn(req.pgn, req.moves_data, key_moments=req.key_moments or [])
         return {"pgn": pgn}
     except Exception as e:
         raise HTTPException(500, str(e))

@@ -927,30 +927,89 @@ def count_games_in_pgn(pgn_text: str) -> int:
     return count
 
 
-def generate_annotated_pgn(pgn_text: str, moves_data: list) -> str:
+def generate_annotated_pgn(
+    pgn_text: str,
+    moves_data: list,
+    key_moments: list | None = None,
+) -> str:
+    """Generate a fully annotated PGN with NAG symbols, engine evals, and AI coaching notes.
+
+    Compatible with Chessbase, Lichess study import, SCID, Arena, and any
+    standard PGN reader that supports NAG codes and comment annotations.
+    """
+    # NAG codes per PGN standard (chess.pgn constants match these values)
+    _NAG = {
+        "Brilliant":  chess.pgn.NAG_BRILLIANT_MOVE,   # 3  = !!
+        "Best":       chess.pgn.NAG_GOOD_MOVE,         # 1  = !
+        "Excellent":  chess.pgn.NAG_GOOD_MOVE,         # 1  = !
+        "Inaccuracy": chess.pgn.NAG_DUBIOUS_MOVE,      # 6  = ?!
+        "Mistake":    chess.pgn.NAG_MISTAKE,            # 2  = ?
+        "Blunder":    chess.pgn.NAG_BLUNDER,            # 4  = ??
+        "Miss":       chess.pgn.NAG_BLUNDER,            # 4  = ??
+    }
     try:
         game = chess.pgn.read_game(StringIO(pgn_text))
         if not game:
             return pgn_text
+
         annotated = chess.pgn.Game()
         annotated.headers.update(game.headers)
+        annotated.headers["Annotator"] = "thechess.ai (Stockfish + AI coach)"
+
+        # Index key moments by (full_move_number, side) for O(1) lookup
+        km_index: dict[tuple[int, str], dict] = {}
+        if key_moments:
+            for km in key_moments:
+                mn = km.get("move_num", 0)
+                side = km.get("side", "")
+                if mn and side:
+                    km_index[(mn, side)] = km
+
         node = annotated
-        board = game.board()
         for i, orig_node in enumerate(game.mainline()):
             move = orig_node.move
             node = node.add_variation(move)
-            if i < len(moves_data):
-                m = moves_data[i]
-                parts = []
-                clf = m.get("classification", "")
-                if clf not in ("Best", "Excellent", "Good", "Accurate"):
-                    parts.append(clf)
-                score = m.get("score_after")
-                if score is not None:
-                    parts.append(f"[{score / 100:+.2f}]")
-                if parts:
-                    node.comment = " ".join(parts)
-            board.push(move)
+
+            if i >= len(moves_data):
+                continue
+
+            m = moves_data[i]
+            clf = m.get("classification", "")
+            score = m.get("score_after")  # centipawns from White's POV
+
+            # NAG symbol
+            nag = _NAG.get(clf)
+            if nag is not None:
+                node.nags.add(nag)
+
+            # Build PGN comment
+            comment_parts: list[str] = []
+
+            # [%eval] annotation — Lichess import and many GUIs understand this
+            if score is not None:
+                comment_parts.append(f"[%eval {score / 100:+.2f}]")
+
+            # Classification label for errors
+            if clf and clf not in ("Best", "Excellent", "Good", "Accurate"):
+                comment_parts.append(f"{clf}.")
+
+            # AI coaching commentary for this specific moment
+            full_move = (i // 2) + 1
+            side = "White" if i % 2 == 0 else "Black"
+            km = km_index.get((full_move, side))
+            if km:
+                what = (km.get("what_happened") or "").strip()
+                best_exp = (km.get("best_explanation") or "").strip()
+                best_move = (km.get("best") or "").strip()
+                if what:
+                    comment_parts.append(what)
+                if best_exp:
+                    prefix = f"Best was {best_move}: " if best_move else ""
+                    comment_parts.append(f"{prefix}{best_exp}")
+
+            if comment_parts:
+                node.comment = " ".join(comment_parts)
+
         return str(annotated)
     except Exception as e:
         logger.error("Error generating annotated PGN: %s", e)

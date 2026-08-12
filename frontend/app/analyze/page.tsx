@@ -632,9 +632,13 @@ function AnalyzePageContent() {
     if (!pgn || !movesData.length || exporting) return;
     setExporting(true);
     try {
-      const { pgn: annotated } = await fetchAnnotatedPgn(pgn, movesData);
-      downloadAnnotatedPgn(annotated);
-      setToast("PGN downloaded");
+      let keyMoments: object[] = [];
+      if (aiReport) {
+        try { keyMoments = JSON.parse(aiReport)?.key_moments ?? []; } catch { /* no-op */ }
+      }
+      const { pgn: annotated } = await fetchAnnotatedPgn(pgn, movesData, keyMoments);
+      downloadAnnotatedPgn(annotated, "thechessai-analysis.pgn");
+      setToast("AI-annotated PGN downloaded");
     } catch {
       downloadAnnotatedPgn(pgn);
       setToast("PGN downloaded");
