@@ -788,9 +788,16 @@ function AnalyzePageContent() {
                     opacity: exporting ? 0.5 : 1,
                     cursor: exporting ? "not-allowed" : "pointer",
                   }}
-                  className="hover:opacity-80 transition-opacity"
+                  className={`hover:opacity-80 transition-opacity${movesData.length > 0 && aiReport && !exporting ? " pgn-export-ready" : ""}`}
                 >
-                  {exporting ? "Exporting…" : "⬇ Export PGN"}
+                  {exporting ? "Exporting…" : "⬇ Export Annotated PGN"}
+                  {movesData.length > 0 && aiReport && !exporting && (
+                    <span style={{
+                      display: "inline-block", width: 5, height: 5, borderRadius: "50%",
+                      background: "var(--gold)", marginLeft: 5, verticalAlign: "middle",
+                      animation: "pgn-dot 1.6s ease-in-out infinite",
+                    }} />
+                  )}
                 </button>
               </>
             )}
@@ -923,7 +930,7 @@ function AnalyzePageContent() {
 
       {toast && <Toast message={toast} onDone={clearToast} />}
 
-      <style dangerouslySetInnerHTML={{ __html: "@keyframes slide-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } } @keyframes spin { to { transform: rotate(360deg); } } @keyframes report-dot-btn { 0%,100% { opacity: 0.3; transform: scale(1); } 50% { opacity: 1; transform: scale(1.4); } } @keyframes study-tab-glow { 0%,100% { background: rgba(91,142,245,0.05); } 50% { background: rgba(91,142,245,0.18); } } .study-tab-ready { animation: study-tab-glow 1.6s ease-in-out infinite; }" }} />
+      <style dangerouslySetInnerHTML={{ __html: "@keyframes slide-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } } @keyframes spin { to { transform: rotate(360deg); } } @keyframes report-dot-btn { 0%,100% { opacity: 0.3; transform: scale(1); } 50% { opacity: 1; transform: scale(1.4); } } @keyframes study-tab-glow { 0%,100% { background: rgba(91,142,245,0.05); } 50% { background: rgba(91,142,245,0.18); } } .study-tab-ready { animation: study-tab-glow 1.6s ease-in-out infinite; } @keyframes pgn-export-glow { 0%,100% { background: rgba(201,162,68,0.06); border-color: rgba(201,162,68,0.18); color: var(--gold); } 50% { background: rgba(201,162,68,0.18); border-color: rgba(201,162,68,0.45); color: var(--gold-light); } } .pgn-export-ready { animation: pgn-export-glow 1.6s ease-in-out infinite; } @keyframes pgn-dot { 0%,100% { opacity: 0.4; transform: scale(1); } 50% { opacity: 1; transform: scale(1.4); } }" }} />
     </>
   );
 }
