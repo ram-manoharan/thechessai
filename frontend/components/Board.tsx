@@ -126,6 +126,10 @@ export function Board() {
     boardStyle: {
       borderRadius: "var(--board-radius)",
       boxShadow: "var(--shadow-lg)",
+      // react-chessboard v5 defaults to height:'100%' which collapses to 0
+      // inside a flex/grid container with auto height. Override to auto so
+      // the grid rows expand via the squares' aspect-ratio:1/1 instead.
+      height: "auto",
     },
   };
 
@@ -162,7 +166,9 @@ export function Board() {
         </div>
       )}
 
-      <Chessboard options={boardOptions} />
+      <div style={{ width: "100%", aspectRatio: "1 / 1" }}>
+        <Chessboard options={boardOptions} />
+      </div>
 
       {/* Board controls */}
       <div className="flex items-center justify-center gap-2 flex-wrap">
