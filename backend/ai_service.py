@@ -942,8 +942,14 @@ Respond with ONLY valid JSON — no markdown, no extra text:
         return result, "image/jpeg"
 
     def _vision_call(self, b64: str, mime: str, prompt: str,
-                     max_tokens: int = 800) -> str:
-        """Single vision API call — returns raw response text."""
+                     max_tokens: int = 4000) -> str:
+        """Single vision API call — returns raw response text.
+
+        claude-sonnet-5 uses adaptive thinking by default.  Thinking tokens
+        count toward max_tokens, so 800 leaves almost nothing for the actual
+        text response.  We default to 4000 which comfortably covers
+        ~1500 thinking tokens + a full scoresheet transcript.
+        """
         if self.vision_client == "_anthropic":
             msg = self._anthropic_client.messages.create(
                 model=self.vision_model,
@@ -954,8 +960,14 @@ Respond with ONLY valid JSON — no markdown, no extra text:
                     {"type": "text", "text": prompt},
                 ]}],
             )
-            # Adaptive thinking may prepend a ThinkingBlock; find the first TextBlock
-            return next(b.text for b in msg.content if b.type == "text")
+            # Adaptive thinking prepends a ThinkingBlock; find the first TextBlock
+            text_blocks = [b for b in msg.content if b.type == "text"]
+            if not text_blocks:
+                raise RuntimeError(
+                    f"Vision model returned no text (stop_reason={msg.stop_reason}). "
+                    "Try scanning the photo again."
+                )
+            return text_blocks[0].text
         response = self._create_completion(client=self.vision_client,
             model=self.vision_model,
             messages=[{
@@ -1030,7 +1042,7 @@ Output ONLY this table — no explanations, no JSON, no chess analysis."""
 
         try:
             raw_transcript = self._vision_call(b64, mime_type, pass1_prompt,
-                                               max_tokens=800)
+                                               max_tokens=4000)
             logger.info("Notation OCR pass1 transcript:\n%s", raw_transcript)
         except Exception as e:
             logger.warning("transcribe_notation_image pass1 failed: %s", e)
