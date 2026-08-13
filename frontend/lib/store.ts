@@ -8,6 +8,7 @@ const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 export type GameStore = {
   // Input
   pgn:          string;
+  analysisKey:  number;   // increments each time analysis should (re-)start
   playerColor:  "white" | "black";
   // Analysis result
   movesData:    MoveData[];
@@ -31,6 +32,7 @@ export type GameStore = {
 
   // Actions
   setPgn:          (pgn: string) => void;
+  startAnalysis:   (pgn: string) => void;   // reset + set pgn + bump key atomically
   setPlayerColor:  (c: "white" | "black") => void;
   setKidMode:      (v: boolean) => void;
   setAnalyzing:    (v: boolean) => void;
@@ -54,6 +56,7 @@ export const useGameStore = create<GameStore>()(
   persist(
     (set, get) => ({
       pgn:          "",
+      analysisKey:  0,
       playerColor:  "white",
       movesData:    [],
       positions:    [],
@@ -72,6 +75,18 @@ export const useGameStore = create<GameStore>()(
       kidMode:      false,
 
       setPgn:         (pgn)         => set({ pgn }),
+      startAnalysis:  (pgn)         => set(s => ({
+        pgn,
+        analysisKey: s.analysisKey + 1,
+        // Intentionally NOT clearing movesData/aiReport here — they persist in
+        // localStorage so a fresh page reload still sees non-empty results and
+        // the guard in the analyze page's useEffect blocks spurious auto-analysis.
+        // The old results stay visible (briefly) until the new analysis overwrites them.
+        currentIdx: -1,
+        analyzing: false,
+        error: null,
+        exploreMode: false,
+      })),
       setPlayerColor: (playerColor) => set({ playerColor }),
       setKidMode:     (kidMode)     => set({ kidMode }),
       setAnalyzing:   (analyzing)   => set({ analyzing }),
@@ -107,6 +122,7 @@ export const useGameStore = create<GameStore>()(
       // Only persist the game data, not transient UI state
       partialize: (s) => ({
         pgn:         s.pgn,
+        // analysisKey intentionally NOT persisted — it's a session-only trigger
         playerColor: s.playerColor,
         movesData:   s.movesData,
         positions:   s.positions,

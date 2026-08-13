@@ -71,10 +71,9 @@ function parseGame(pgn: string): GameInfo {
 export function ImportPanel() {
   const router         = useRouter();
   const { status: sessionStatus } = useSession();
-  const setPgn         = useGameStore(s => s.setPgn);
+  const startAnalysis  = useGameStore(s => s.startAnalysis);
   const setPlayerColor = useGameStore(s => s.setPlayerColor);
   const setKidMode     = useGameStore(s => s.setKidMode);
-  const reset          = useGameStore(s => s.reset);
 
   const [tab, setTab]              = useState<Tab>("import");
   const [platform, setPlatform]    = useState<Platform>("lichess");
@@ -113,10 +112,9 @@ export function ImportPanel() {
   ];
 
   const handleAnalyze = (pgn: string, c: "white" | "black" = color) => {
-    reset();
-    setPgn(pgn);
     setPlayerColor(c);
     setKidMode(kidMode);
+    startAnalysis(pgn);
     router.push("/analyze");
   };
 

@@ -10,6 +10,7 @@ import {
   type ScoresheetResult,
 } from "@/lib/api";
 import { useGameStore } from "@/lib/store";
+import { Navbar } from "@/components/Navbar";
 
 const Chessboard = dynamic(
   () => import("react-chessboard").then(m => m.Chessboard),
@@ -36,8 +37,7 @@ const DEFAULT_META: Meta = {
 
 export default function ScanPage() {
   const router = useRouter();
-  const reset = useGameStore(s => s.reset);
-  const setPgn = useGameStore(s => s.setPgn);
+  const startAnalysis = useGameStore(s => s.startAnalysis);
 
   const [step, setStep] = useState<Step>("upload");
   const [dragOver, setDragOver] = useState(false);
@@ -137,11 +137,26 @@ export default function ScanPage() {
     await revalidate(newSans);
   };
 
-  const handleAnalyse = () => {
-    if (!validPgn) return;
-    reset();
-    setPgn(validPgn);
-    router.push("/analyze");
+  const handleAnalyse = async () => {
+    // Re-validate with current metadata so headers (White, Black, Date, etc.)
+    // are up-to-date in the PGN, and so we always get a fresh pgn string
+    // even if the move list hasn't changed.
+    setValidating(true);
+    try {
+      const result = await validateScoresheetMoves(
+        moves.map(m => m.san),
+        { white_name: meta.white_name, black_name: meta.black_name,
+          date: meta.date, result: meta.result, event: meta.event },
+      );
+      if (!result.valid_pgn) return;
+      // startAnalysis resets state + bumps analysisKey atomically, so the
+      // analyze page's useEffect([pgn, analysisKey]) always fires even when
+      // the pgn text hasn't changed (e.g. same game scanned twice).
+      startAnalysis(result.valid_pgn);
+      router.push("/analyze");
+    } finally {
+      setValidating(false);
+    }
   };
 
   // Group flat move list into per-move-number pairs for the table
@@ -164,6 +179,8 @@ export default function ScanPage() {
   // ── Upload step ─────────────────────────────────────────────────────────────
   if (step === "upload" || step === "scanning") {
     return (
+      <>
+      <Navbar />
       <div
         style={{
           minHeight: "calc(100vh - 56px)",
@@ -378,12 +395,15 @@ export default function ScanPage() {
 
         <style dangerouslySetInnerHTML={{ __html: "@keyframes scan-spin { to { transform: rotate(360deg); } }" }} />
       </div>
+      </>
     );
   }
 
   // ── Review step ─────────────────────────────────────────────────────────────
   if (step === "review") {
     return (
+      <>
+      <Navbar />
       <div
         style={{
           minHeight: "calc(100vh - 56px)",
@@ -725,11 +745,14 @@ export default function ScanPage() {
           </div>
         )}
       </div>
+      </>
     );
   }
 
   // ── Confirm step ────────────────────────────────────────────────────────────
   return (
+    <>
+    <Navbar />
     <div
       style={{
         minHeight: "calc(100vh - 56px)",
@@ -851,24 +874,26 @@ export default function ScanPage() {
           </button>
           <button
             onClick={handleAnalyse}
+            disabled={validating}
             style={{
               flex: 2,
               padding: "12px",
               borderRadius: 10,
               border: "none",
-              background: "var(--gold)",
-              color: "#000",
+              background: validating ? "var(--bg-elevated)" : "var(--gold)",
+              color: validating ? "var(--text-muted)" : "#000",
               fontSize: 14,
               fontWeight: 700,
-              cursor: "pointer",
+              cursor: validating ? "not-allowed" : "pointer",
               letterSpacing: "0.02em",
             }}
           >
-            Analyse Game →
+            {validating ? "Preparing…" : "Analyse Game →"}
           </button>
         </div>
       </div>
     </div>
+    </>
   );
 }
 

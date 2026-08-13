@@ -489,6 +489,7 @@ function MiniStatsStrip() {
 /* ── Main page ──────────────────────────────────────────────────────────────── */
 function AnalyzePageContent() {
   const pgn          = useGameStore(s => s.pgn);
+  const analysisKey  = useGameStore(s => s.analysisKey);
   const playerColor  = useGameStore(s => s.playerColor);
   const kidMode      = useGameStore(s => s.kidMode);
   const analyzing    = useGameStore(s => s.analyzing);
@@ -570,7 +571,9 @@ function AnalyzePageContent() {
 
   useEffect(() => {
     if (!pgn) return;
-    if (movesData.length > 0 && aiReport) return;
+    // Only run when startAnalysis() or ImportPanel explicitly triggered analysis this session.
+    // Cold page loads (analysisKey === 0) never auto-analyze — they just show stored results.
+    if (analysisKey === 0) return;
 
     setAnalyzing(true);
     setError(null);
@@ -621,7 +624,7 @@ function AnalyzePageContent() {
     );
 
     return () => stopRef.current?.();
-  }, [pgn]); // eslint-disable-line
+  }, [pgn, analysisKey]); // eslint-disable-line
 
   function handleNewGame() {
     stopRef.current?.();

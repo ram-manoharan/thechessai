@@ -172,10 +172,18 @@ class AIService:
             # Without it: OpenAI key → current-provider vision model → Groq (free).
             # Groq is last because its free tier has strict image-type limits.
             vision_provider = os.getenv("VISION_PROVIDER", "").strip().lower()
-            openai_key = os.getenv("OPENAI_API_KEY")
-            groq_key   = os.getenv("GROQ_API_KEY")
+            openai_key    = os.getenv("OPENAI_API_KEY")
+            groq_key      = os.getenv("GROQ_API_KEY")
+            anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+            self._anthropic_client = None
 
-            if vision_provider == "openai" and openai_key:
+            if vision_provider == "anthropic" and anthropic_key:
+                import anthropic as _anthropic
+                self._anthropic_client = _anthropic.Anthropic(api_key=anthropic_key)
+                self.vision_client = "_anthropic"
+                self.vision_model  = "claude-sonnet-5"
+                logger.info("AIService: vision via Anthropic claude-sonnet-5 (pinned)")
+            elif vision_provider == "openai" and openai_key:
                 self.vision_client = OpenAI(api_key=openai_key)
                 self.vision_model  = "gpt-4o"
                 logger.info("AIService: vision via OpenAI gpt-4o (pinned)")
@@ -849,7 +857,19 @@ Respond with ONLY valid JSON — no markdown, no extra text:
     def _vision_call(self, b64: str, mime: str, prompt: str,
                      max_tokens: int = 800) -> str:
         """Single vision API call — returns raw response text."""
-        response = self._create_completion(client=self.vision_client, 
+        if self.vision_client == "_anthropic":
+            msg = self._anthropic_client.messages.create(
+                model=self.vision_model,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": [
+                    {"type": "image", "source": {
+                        "type": "base64", "media_type": mime, "data": b64}},
+                    {"type": "text", "text": prompt},
+                ]}],
+            )
+            # Adaptive thinking may prepend a ThinkingBlock; find the first TextBlock
+            return next(b.text for b in msg.content if b.type == "text")
+        response = self._create_completion(client=self.vision_client,
             model=self.vision_model,
             messages=[{
                 "role": "user",
@@ -880,7 +900,7 @@ Respond with ONLY valid JSON — no markdown, no extra text:
         import json as _json
 
         if not self.vision_client or not self.vision_model:
-            return {"error": "Vision model not configured. Add OPENAI_API_KEY to .env."}
+            return {"error": "Vision model not configured. Set VISION_PROVIDER=anthropic and ANTHROPIC_API_KEY in .env."}
 
         # ── Pre-process image ─────────────────────────────────────────────
         img_bytes, mime_type = self._preprocess_notation_image(image_bytes)
