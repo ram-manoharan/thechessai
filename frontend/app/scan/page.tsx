@@ -583,10 +583,8 @@ export default function ScanPage() {
                     move={pair.white}
                     selectedIdx={selectedIdx}
                     onSelect={m => {
-                      if (!m.valid) {
-                        setSelectedIdx(m.idx);
-                        setEditSan(m.san);
-                      }
+                      setSelectedIdx(m.idx);
+                      setEditSan(m.san);
                     }}
                   />
 
@@ -595,10 +593,8 @@ export default function ScanPage() {
                     move={pair.black}
                     selectedIdx={selectedIdx}
                     onSelect={m => {
-                      if (!m.valid) {
-                        setSelectedIdx(m.idx);
-                        setEditSan(m.san);
-                      }
+                      setSelectedIdx(m.idx);
+                      setEditSan(m.san);
                     }}
                     borderLeft
                   />
@@ -607,12 +603,14 @@ export default function ScanPage() {
             </div>
           </div>
 
-          {/* Correction panel */}
+          {/* Edit panel — shown for any selected move */}
           {selectedMove && (
             <div
               style={{
                 background: "var(--bg-surface)",
-                border: "1px solid rgba(234,82,82,0.35)",
+                border: selectedMove.valid
+                  ? "1px solid var(--border-strong)"
+                  : "1px solid rgba(234,82,82,0.35)",
                 borderRadius: 12,
                 overflow: "hidden",
                 position: "sticky",
@@ -622,8 +620,12 @@ export default function ScanPage() {
               <div
                 style={{
                   padding: "12px 14px",
-                  background: "rgba(234,82,82,0.08)",
-                  borderBottom: "1px solid rgba(234,82,82,0.2)",
+                  background: selectedMove.valid
+                    ? "var(--bg-elevated)"
+                    : "rgba(234,82,82,0.08)",
+                  borderBottom: selectedMove.valid
+                    ? "1px solid var(--border)"
+                    : "1px solid rgba(234,82,82,0.2)",
                 }}
               >
                 <div
@@ -631,13 +633,17 @@ export default function ScanPage() {
                     fontSize: 11,
                     fontWeight: 700,
                     letterSpacing: "0.08em",
-                    color: "var(--clr-blunder)",
+                    color: selectedMove.valid ? "var(--text-secondary)" : "var(--clr-blunder)",
                     textTransform: "uppercase",
                     marginBottom: 2,
                   }}
                 >
-                  Correct move {selectedMove.move_num}
+                  {selectedMove.valid ? "Edit" : "Fix"} move {selectedMove.move_num}
                   {selectedMove.side === "Black" ? "…" : "."}
+                  {" "}
+                  <span style={{ fontWeight: 400, opacity: 0.7 }}>
+                    ({selectedMove.side})
+                  </span>
                 </div>
                 <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
                   Position before this move
@@ -696,11 +702,11 @@ export default function ScanPage() {
                       background:
                         validating || !editSan.trim()
                           ? "var(--bg-elevated)"
-                          : "var(--gold)",
+                          : "var(--accent-blue)",
                       color:
                         validating || !editSan.trim()
                           ? "var(--text-muted)"
-                          : "#000",
+                          : "#fff",
                       fontSize: 13,
                       fontWeight: 700,
                       cursor:
@@ -767,7 +773,7 @@ export default function ScanPage() {
             <strong style={{ color: "var(--clr-blunder)" }}>
               {errorCount} invalid move{errorCount !== 1 ? "s" : ""}
             </strong>{" "}
-            — click a red move to correct it. All moves must be valid before you
+            — click any move to edit it. All moves must be valid before you
             can continue.
           </div>
         )}
@@ -958,9 +964,11 @@ function MoveCell({
         padding: "9px 14px",
         fontSize: 13,
         fontFamily: "monospace",
-        cursor: isError ? "pointer" : "default",
+        cursor: "pointer",
         background: isSelected
-          ? "rgba(234,82,82,0.15)"
+          ? isError
+            ? "rgba(234,82,82,0.15)"
+            : "rgba(79,142,247,0.12)"
           : isError
             ? "rgba(234,82,82,0.06)"
             : "transparent",
@@ -971,7 +979,7 @@ function MoveCell({
         alignItems: "center",
         gap: 6,
       }}
-      title={isError ? move.san + " — click to correct" : undefined}
+      title={`Move ${move.move_num} (${move.side}) — click to edit`}
     >
       {isError && (
         <span
