@@ -184,6 +184,18 @@ export function streamAnalysis(
 
 // ── Puzzles & Annotated PGN ──────────────────────────────────────────────────
 
+export interface PuzzleStats {
+  daily_streak: number;
+  today_solved: number;
+  total_solved: number;
+  queue_size:   number;
+  session_goal: number;
+}
+
+export async function getPuzzleStats(): Promise<PuzzleStats> {
+  return authedFetch(`${BASE}/api/user/puzzle-stats`) as Promise<PuzzleStats>;
+}
+
 export async function fetchPuzzles(pgn: string, playerColor: "white" | "black") {
   return apiFetch(`${BASE}/api/analysis/game/puzzles`, {
     method: "POST",

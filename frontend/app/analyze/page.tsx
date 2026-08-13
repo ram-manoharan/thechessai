@@ -18,7 +18,7 @@ import { StudyPanel } from "@/components/GameStudy";
 import { useGameStore } from "@/lib/store";
 import {
   streamAnalysis, fetchAnnotatedPgn, downloadAnnotatedPgn, explainPosition, fetchPositionPeers,
-  saveAnalyzedGame, getAnalyzedGame,
+  saveAnalyzedGame, getAnalyzedGame, fetchPuzzles,
 } from "@/lib/api";
 import type { TopMove, PeerStats } from "@/lib/api";
 import { clfConfig, computeAccuracy, accuracyColor, countQuality, CLF_CONFIG } from "@/lib/chess-utils";
@@ -615,6 +615,8 @@ function AnalyzePageContent() {
                 moves_data: s.movesData, ai_report: s.aiReport, estimated_elo: s.estimatedElo,
               },
             }).catch(() => {});
+            // Extract and save puzzles to the daily practice queue (background, fire-and-forget)
+            fetchPuzzles(s.pgn, playerColor).catch(() => {});
           }
         }
       },

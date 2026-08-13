@@ -9,7 +9,8 @@ import { Navbar } from "@/components/Navbar";
 import { useGameStore } from "@/lib/store";
 import {
   fetchPuzzles, getPuzzleQueue, getMistakeFingerprint, recordPuzzleProgress,
-  type PuzzleData, type MistakeTheme,
+  getPuzzleStats,
+  type PuzzleData, type MistakeTheme, type PuzzleStats,
 } from "@/lib/api";
 import { THEME_GLOSSARY } from "@/lib/chess-utils";
 
@@ -80,18 +81,22 @@ export default function PuzzlesPage() {
   const { status: sessionStatus } = useSession();
   const signedIn = sessionStatus === "authenticated";
 
-  const [source,      setSource]      = useState<PuzzleSource>("game");
-  const [puzzles,     setPuzzles]     = useState<PuzzleData[]>([]);
-  const [loading,     setLoading]     = useState(false);
-  const [error,       setError]       = useState("");
-  const [puzzleIdx,   setPuzzleIdx]   = useState(0);
-  const [solveState,  setSolveState]  = useState<SolveState>("idle");
-  const [fen,         setFen]         = useState("");
-  const [message,     setMessage]     = useState("");
-  const [hintLevel,   setHintLevel]   = useState(0);
-  const [themes,      setThemes]      = useState<MistakeTheme[]>([]);
+  const [source,         setSource]         = useState<PuzzleSource>("game");
+  const [puzzles,        setPuzzles]        = useState<PuzzleData[]>([]);
+  const [loading,        setLoading]        = useState(false);
+  const [error,          setError]          = useState("");
+  const [puzzleIdx,      setPuzzleIdx]      = useState(0);
+  const [solveState,     setSolveState]     = useState<SolveState>("idle");
+  const [fen,            setFen]            = useState("");
+  const [message,        setMessage]        = useState("");
+  const [hintLevel,      setHintLevel]      = useState(0);
+  const [themes,         setThemes]         = useState<MistakeTheme[]>([]);
+  const [sessionCorrect, setSessionCorrect] = useState(0);
+  const [sessionDone,    setSessionDone]    = useState(false);
+  const [stats,          setStats]          = useState<PuzzleStats | null>(null);
 
-  const chessRef = useRef<Chess | null>(null);
+  const chessRef    = useRef<Chess | null>(null);
+  const autoAdvRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const puzzle = puzzles[puzzleIdx] ?? null;
 
@@ -103,16 +108,21 @@ export default function PuzzlesPage() {
     setMessage(`Find the best move for ${p.color}.`);
   }, []);
 
+  const SESSION_GOAL = 5;
+
   useEffect(() => {
     if (source === "queue") {
       if (!signedIn) return;
       setLoading(true);
       setError("");
-      Promise.all([getPuzzleQueue(20), getMistakeFingerprint(3)])
-        .then(([q, fp]) => {
+      setSessionCorrect(0);
+      setSessionDone(false);
+      Promise.all([getPuzzleQueue(SESSION_GOAL), getMistakeFingerprint(3), getPuzzleStats()])
+        .then(([q, fp, st]) => {
           const mapped = q.puzzles.map(queuedToPuzzleData);
           setPuzzles(mapped);
           setThemes(fp.themes);
+          setStats(st);
           setLoading(false);
           if (mapped.length > 0) initPuzzle(mapped[0]);
         })
@@ -167,15 +177,29 @@ export default function PuzzlesPage() {
     if (isCorrect) {
       setSolveState("correct");
       setMessage(`Correct! Best move was ${puzzle.best_move_san}`);
+      if (source === "queue") {
+        recordPuzzleProgress(puzzle.fen, true).catch(() => {});
+        setSessionCorrect(n => n + 1);
+        // auto-advance after brief celebration
+        if (autoAdvRef.current) clearTimeout(autoAdvRef.current);
+        autoAdvRef.current = setTimeout(() => {
+          if (puzzleIdx + 1 < puzzles.length) {
+            goToPuzzle(puzzleIdx + 1);
+          } else {
+            setSessionDone(true);
+            setStats(prev => prev ? { ...prev, today_solved: prev.today_solved + 1 } : prev);
+          }
+        }, 1600);
+      }
     } else {
       setSolveState("wrong");
       setMessage(`Not quite. You played ${playedSan}; best was ${puzzle.best_move_san}.`);
-    }
-    if (source === "queue") {
-      recordPuzzleProgress(puzzle.fen, isCorrect).catch(() => {});
+      if (source === "queue") {
+        recordPuzzleProgress(puzzle.fen, false).catch(() => {});
+      }
     }
     return true;
-  }, [puzzle, solveState, source]); // eslint-disable-line
+  }, [puzzle, solveState, source, puzzleIdx, puzzles, goToPuzzle]); // eslint-disable-line
 
   const showSolution = useCallback(() => {
     if (!puzzle || !chessRef.current) return;
@@ -188,7 +212,10 @@ export default function PuzzlesPage() {
     }
     setSolveState("shown");
     setMessage(`Best move: ${puzzle.best_move_san} — continuing: ${puzzle.continuation.slice(0, 3).join(", ")}`);
-  }, [puzzle]);
+    if (source === "queue") {
+      recordPuzzleProgress(puzzle.fen, false).catch(() => {});
+    }
+  }, [puzzle, source]);
 
   // Compute hint square highlights using chess.js to parse from/to
   const hintSquares = useMemo<Record<string, { backgroundColor: string }>>(() => {
@@ -257,7 +284,56 @@ export default function PuzzlesPage() {
           </div>
         )}
 
-        {source === "queue" && themes.length > 0 && (
+        {/* ── Daily Practice stats header ─────────────────────────────────── */}
+        {source === "queue" && stats && !sessionDone && (
+          <div className="card" style={{ padding: "14px 18px", marginBottom: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
+              {/* Streak */}
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 20, lineHeight: 1 }}>🔥</span>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: "var(--text-primary)", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
+                    {stats.daily_streak}
+                  </div>
+                  <div style={{ fontSize: 10, color: "var(--text-muted)", letterSpacing: "0.05em" }}>
+                    {stats.daily_streak === 1 ? "day streak" : "day streak"}
+                  </div>
+                </div>
+              </div>
+              {/* Divider */}
+              <div style={{ width: 1, height: 32, background: "var(--border)", flexShrink: 0 }} />
+              {/* Today's progress */}
+              <div style={{ flex: 1, minWidth: 120 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
+                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Today</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-primary)", fontVariantNumeric: "tabular-nums" }}>
+                    {Math.min(stats.today_solved + sessionCorrect, stats.session_goal)}/{stats.session_goal}
+                  </span>
+                </div>
+                <div style={{ height: 6, background: "var(--bg-elevated)", borderRadius: 3, overflow: "hidden" }}>
+                  <div style={{
+                    height: "100%",
+                    width: `${Math.min(100, ((stats.today_solved + sessionCorrect) / stats.session_goal) * 100)}%`,
+                    background: "linear-gradient(90deg, var(--accent-blue), var(--gold))",
+                    borderRadius: 3,
+                    transition: "width 0.4s ease",
+                  }} />
+                </div>
+              </div>
+              {/* Divider */}
+              <div style={{ width: 1, height: 32, background: "var(--border)", flexShrink: 0 }} />
+              {/* Total */}
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 18, fontWeight: 800, color: "var(--text-primary)", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
+                  {stats.total_solved}
+                </div>
+                <div style={{ fontSize: 10, color: "var(--text-muted)", letterSpacing: "0.05em" }}>total solved</div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {source === "queue" && themes.length > 0 && !sessionDone && (
           <div className="card" style={{ padding: "14px 18px", marginBottom: 20, display: "flex", flexDirection: "column", gap: 8 }}>
             <span style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--gold)" }}>
               Your top patterns
@@ -297,8 +373,92 @@ export default function PuzzlesPage() {
         )}
 
         {source === "queue" && !loading && puzzles.length === 0 && !error && (
-          <div className="card" style={{ padding: "24px", textAlign: "center", color: "var(--text-secondary)", fontSize: 13 }}>
-            No practice puzzles queued yet — analyze a few games and use the Study tab to build up your mistake history.
+          <div className="card" style={{ padding: "28px 24px", textAlign: "center" }}>
+            <div style={{ fontSize: 32, marginBottom: 12 }}>♟</div>
+            <p style={{ color: "var(--text-primary)", fontWeight: 700, fontSize: 16, marginBottom: 8 }}>
+              No puzzles ready yet
+            </p>
+            <p style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.65, marginBottom: 20 }}>
+              Puzzles are built from your own mistakes. Analyze a game on the Analyze page — puzzles will be
+              automatically extracted and queued here for today's practice.
+            </p>
+            <Link href="/analyze" className="btn-gold" style={{ padding: "10px 22px", borderRadius: 10, fontSize: 13, display: "inline-block", textDecoration: "none" }}>
+              Analyze a game
+            </Link>
+          </div>
+        )}
+
+        {/* ── Session complete screen ──────────────────────────────────────── */}
+        {source === "queue" && sessionDone && (
+          <div className="card" style={{ padding: "40px 28px", textAlign: "center", animation: "session-in 0.5s cubic-bezier(0.34,1.56,0.64,1) both" }}>
+            <div style={{ fontSize: 52, lineHeight: 1, marginBottom: 16 }}>
+              {sessionCorrect >= puzzles.length ? "🏆" : sessionCorrect >= Math.ceil(puzzles.length / 2) ? "🎯" : "💪"}
+            </div>
+            <h2 style={{ fontFamily: "var(--font-display)", fontSize: 26, fontWeight: 800, color: "var(--text-primary)", marginBottom: 8 }}>
+              Session complete!
+            </h2>
+            <p style={{ color: "var(--text-secondary)", fontSize: 15, marginBottom: 24 }}>
+              {sessionCorrect}/{puzzles.length} correct
+              {sessionCorrect === puzzles.length ? " — perfect session!" : sessionCorrect >= Math.ceil(puzzles.length / 2) ? " — solid work." : " — keep practicing."}
+            </p>
+
+            {/* Streak callout */}
+            {stats && (
+              <div style={{
+                display: "inline-flex", alignItems: "center", gap: 10,
+                background: "var(--gold-subtle)", border: "1px solid var(--gold-border)",
+                borderRadius: 12, padding: "12px 20px", marginBottom: 28,
+              }}>
+                <span style={{ fontSize: 24 }}>🔥</span>
+                <div style={{ textAlign: "left" }}>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: "var(--gold)", lineHeight: 1 }}>
+                    {stats.daily_streak + (stats.today_solved === 0 ? 1 : 0)}-day streak
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+                    {stats.queue_size > 0 ? `${stats.queue_size} more puzzles available` : "Come back tomorrow for more"}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Session dots recap */}
+            <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 28 }}>
+              {puzzles.map((_, i) => (
+                <div key={i} style={{
+                  width: 12, height: 12, borderRadius: "50%",
+                  background: i < sessionCorrect ? "var(--accent-green)" : "rgba(224,82,82,0.6)",
+                  boxShadow: i < sessionCorrect ? "0 0 6px rgba(34,197,94,0.4)" : "none",
+                }} />
+              ))}
+            </div>
+
+            {themes[0] && (
+              <p style={{ color: "var(--text-muted)", fontSize: 12, marginBottom: 24 }}>
+                Top weakness practiced: <strong style={{ color: "var(--accent-blue)" }}>{themes[0].theme}</strong>
+              </p>
+            )}
+
+            <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+              {stats && stats.queue_size > 0 && (
+                <button
+                  onClick={() => { setSessionDone(false); setSource("queue"); }}
+                  className="btn-gold"
+                  style={{ padding: "10px 22px", borderRadius: 10, fontSize: 13, cursor: "pointer" }}
+                >
+                  Practice more ({stats.queue_size} left)
+                </button>
+              )}
+              <Link
+                href="/analyze"
+                style={{
+                  padding: "10px 22px", borderRadius: 10, fontSize: 13,
+                  background: "var(--bg-elevated)", border: "1px solid var(--border)",
+                  color: "var(--text-secondary)", textDecoration: "none",
+                }}
+              >
+                Analyze another game
+              </Link>
+            </div>
           </div>
         )}
 
@@ -385,7 +545,7 @@ export default function PuzzlesPage() {
           </div>
         )}
 
-        {puzzle && (
+        {puzzle && !sessionDone && (
           <div className="grid grid-cols-1 lg:grid-cols-[auto_1fr] gap-6 items-start">
             {/* Board */}
             <div style={{ width: "100%", maxWidth: 420 }}>
@@ -542,14 +702,24 @@ export default function PuzzlesPage() {
                     {"← Previous"}
                   </button>
                 )}
-                {puzzleIdx < puzzles.length - 1 && (
-                  <button
-                    onClick={() => goToPuzzle(puzzleIdx + 1)}
-                    className="btn-gold"
-                    style={{ padding: "8px 16px", borderRadius: 8, fontSize: 13, cursor: "pointer" }}
-                  >
-                    {"Next puzzle →"}
-                  </button>
+                {solveState !== "idle" && (
+                  puzzleIdx < puzzles.length - 1 ? (
+                    <button
+                      onClick={() => { if (autoAdvRef.current) clearTimeout(autoAdvRef.current); goToPuzzle(puzzleIdx + 1); }}
+                      className="btn-gold"
+                      style={{ padding: "8px 16px", borderRadius: 8, fontSize: 13, cursor: "pointer" }}
+                    >
+                      {"Next →"}
+                    </button>
+                  ) : source === "queue" ? (
+                    <button
+                      onClick={() => { if (autoAdvRef.current) clearTimeout(autoAdvRef.current); setSessionDone(true); }}
+                      className="btn-gold"
+                      style={{ padding: "8px 16px", borderRadius: 8, fontSize: 13, cursor: "pointer" }}
+                    >
+                      {"Finish session →"}
+                    </button>
+                  ) : null
                 )}
                 {solveState !== "idle" && (
                   <button
@@ -570,46 +740,71 @@ export default function PuzzlesPage() {
                 )}
               </div>
 
-              {/* Puzzle list */}
-              <div className="card" style={{ padding: 16 }}>
-                <p style={{ color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
-                  All Puzzles
-                </p>
-                <div className="flex flex-col gap-1.5">
-                  {puzzles.map((p, i) => {
-                    const clfKey = Object.keys(CLF_COLORS).find(k => p.classification.includes(k));
-                    const color  = clfKey ? CLF_COLORS[clfKey] : "var(--text-muted)";
-                    return (
-                      <button
+              {/* Session progress dots (queue) / puzzle list (game) */}
+              {source === "queue" ? (
+                <div className="card" style={{ padding: 16 }}>
+                  <p style={{ color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>
+                    Session progress
+                  </p>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                    {puzzles.map((_, i) => (
+                      <div
                         key={i}
-                        onClick={() => goToPuzzle(i)}
                         style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 10,
-                          padding: "8px 10px",
-                          borderRadius: 8,
-                          background: i === puzzleIdx ? "var(--gold-subtle)" : "var(--bg-elevated)",
-                          border: "1px solid " + (i === puzzleIdx ? "var(--gold-border)" : "transparent"),
-                          cursor: "pointer",
-                          textAlign: "left",
+                          width: 14, height: 14, borderRadius: "50%", flexShrink: 0,
+                          background: i < puzzleIdx
+                            ? "var(--accent-green)"
+                            : i === puzzleIdx
+                            ? "var(--gold)"
+                            : "var(--bg-elevated)",
+                          border: i === puzzleIdx ? "2px solid var(--gold)" : "2px solid var(--border)",
+                          boxShadow: i === puzzleIdx ? "0 0 8px rgba(201,162,68,0.5)" : "none",
+                          transition: "all 0.3s ease",
                         }}
-                        className="hover:opacity-80"
-                      >
-                        <span style={{ color, fontWeight: 700, width: 18, fontSize: 12, textAlign: "center" }}>
-                          {clfKey === "Blunder" ? "??" : clfKey === "Mistake" ? "?" : "?!"}
-                        </span>
-                        <span style={{ color: "var(--text-secondary)", fontSize: 12 }}>
-                          {"Move "}{p.move_number}{" · "}{p.phase}
-                        </span>
-                        <span style={{ color: "var(--text-muted)", fontSize: 11, marginLeft: "auto" }}>
-                          {"−"}{p.cp_loss}{" cp"}
-                        </span>
-                      </button>
-                    );
-                  })}
+                      />
+                    ))}
+                    <span style={{ color: "var(--text-muted)", fontSize: 11, marginLeft: 4 }}>
+                      {puzzleIdx + 1}/{puzzles.length}
+                    </span>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="card" style={{ padding: 16 }}>
+                  <p style={{ color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
+                    All Puzzles
+                  </p>
+                  <div className="flex flex-col gap-1.5">
+                    {puzzles.map((p, i) => {
+                      const clfKey = Object.keys(CLF_COLORS).find(k => p.classification.includes(k));
+                      const color  = clfKey ? CLF_COLORS[clfKey] : "var(--text-muted)";
+                      return (
+                        <button
+                          key={i}
+                          onClick={() => goToPuzzle(i)}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 10,
+                            padding: "8px 10px", borderRadius: 8,
+                            background: i === puzzleIdx ? "var(--gold-subtle)" : "var(--bg-elevated)",
+                            border: "1px solid " + (i === puzzleIdx ? "var(--gold-border)" : "transparent"),
+                            cursor: "pointer", textAlign: "left",
+                          }}
+                          className="hover:opacity-80"
+                        >
+                          <span style={{ color, fontWeight: 700, width: 18, fontSize: 12, textAlign: "center" }}>
+                            {clfKey === "Blunder" ? "??" : clfKey === "Mistake" ? "?" : "?!"}
+                          </span>
+                          <span style={{ color: "var(--text-secondary)", fontSize: 12 }}>
+                            {"Move "}{p.move_number}{" · "}{p.phase}
+                          </span>
+                          <span style={{ color: "var(--text-muted)", fontSize: 11, marginLeft: "auto" }}>
+                            {"−"}{p.cp_loss}{" cp"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -635,6 +830,11 @@ export default function PuzzlesPage() {
         @keyframes solve-fade {
           from { opacity: 0; transform: translateY(4px); }
           to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes session-in {
+          0%   { opacity: 0; transform: scale(0.92) translateY(16px); }
+          70%  { transform: scale(1.02) translateY(-2px); }
+          100% { opacity: 1; transform: scale(1) translateY(0); }
         }
       `}</style>
     </>

@@ -9,6 +9,7 @@ schema) is the only table here it actually owns.
 """
 import hashlib
 import json
+import datetime
 import logging
 from typing import Any, Optional
 
@@ -496,6 +497,56 @@ async def delete_saved_profile(profile_id: int, user: CurrentUser = Depends(get_
     if result == "DELETE 0":
         raise HTTPException(404, "Profile not found")
     return {"ok": True}
+
+
+@router.get("/puzzle-stats")
+async def get_puzzle_stats(user: CurrentUser = Depends(get_current_user)):
+    """Streak, today's solved count, total, and queue depth for the daily practice header."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        today_solved = await conn.fetchval(
+            "SELECT COUNT(*) FROM app.puzzle_progress WHERE user_id = $1 AND solved = true AND DATE(solved_at) = CURRENT_DATE",
+            user.user_id,
+        )
+        total_solved = await conn.fetchval(
+            "SELECT COUNT(*) FROM app.puzzle_progress WHERE user_id = $1 AND solved = true",
+            user.user_id,
+        )
+        queue_size = await conn.fetchval(
+            """
+            SELECT COUNT(*) FROM app.saved_puzzle sp
+            LEFT JOIN app.puzzle_progress pp ON pp.user_id = sp.user_id AND pp.puzzle_fen = sp.fen
+            WHERE sp.user_id = $1 AND COALESCE(pp.next_review_at, now()) <= now()
+            """,
+            user.user_id,
+        )
+        solve_dates = await conn.fetch(
+            "SELECT DISTINCT DATE(solved_at) AS d FROM app.puzzle_progress WHERE user_id=$1 AND solved=true ORDER BY d DESC",
+            user.user_id,
+        )
+
+    streak = 0
+    if solve_dates:
+        today     = datetime.date.today()
+        yesterday = today - datetime.timedelta(days=1)
+        first     = solve_dates[0]["d"]
+        if first in (today, yesterday):
+            streak   = 1
+            expected = first - datetime.timedelta(days=1)
+            for row in solve_dates[1:]:
+                if row["d"] == expected:
+                    streak  += 1
+                    expected -= datetime.timedelta(days=1)
+                else:
+                    break
+
+    return {
+        "daily_streak": streak,
+        "today_solved": int(today_solved),
+        "total_solved": int(total_solved),
+        "queue_size":   int(queue_size),
+        "session_goal": 5,
+    }
 
 
 @router.get("/dashboard-summary")
