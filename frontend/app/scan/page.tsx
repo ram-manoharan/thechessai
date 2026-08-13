@@ -19,10 +19,10 @@ const Chessboard = dynamic(
 
 type Step = "upload" | "scanning" | "review" | "confirm";
 
-// Resize a photo to at most MAX_SIDE px on the longest side before uploading.
-// This keeps the network payload small (phones shoot at 4000+ px) and avoids
-// the 5 MB per-image limit on vision APIs.
-const MAX_UPLOAD_SIDE = 1920;
+// Resize a camera photo before uploading so it stays under the vision API
+// per-image limit (5 MB for Anthropic). 1600 px matches the backend's own
+// resize cap, so the uploaded file is already at the working resolution.
+const MAX_UPLOAD_SIDE = 1600;
 async function compressForUpload(file: File): Promise<File> {
   return new Promise(resolve => {
     const img = new window.Image();
@@ -30,18 +30,27 @@ async function compressForUpload(file: File): Promise<File> {
     img.onload = () => {
       URL.revokeObjectURL(url);
       const { naturalWidth: w, naturalHeight: h } = img;
-      if (Math.max(w, h) <= MAX_UPLOAD_SIDE) { resolve(file); return; }
-      const scale = MAX_UPLOAD_SIDE / Math.max(w, h);
-      const cw = Math.round(w * scale);
-      const ch = Math.round(h * scale);
+      const ctx = document.createElement("canvas").getContext("2d");
+      // Always compress camera photos (canvas converts any format to JPEG)
+      if (Math.max(w, h) <= MAX_UPLOAD_SIDE && ctx && file.size < 2_000_000) {
+        resolve(file);
+        return;
+      }
+      const scale = Math.max(w, h) > MAX_UPLOAD_SIDE
+        ? MAX_UPLOAD_SIDE / Math.max(w, h)
+        : 1;
+      const cw = Math.max(1, Math.round(w * scale));
+      const ch = Math.max(1, Math.round(h * scale));
       const canvas = document.createElement("canvas");
       canvas.width = cw; canvas.height = ch;
-      canvas.getContext("2d")!.drawImage(img, 0, 0, cw, ch);
+      const context = canvas.getContext("2d");
+      if (!context) { resolve(file); return; }
+      context.drawImage(img, 0, 0, cw, ch);
       canvas.toBlob(blob => {
         if (!blob) { resolve(file); return; }
         resolve(new File([blob], file.name.replace(/\.[^.]+$/, ".jpg"),
           { type: "image/jpeg" }));
-      }, "image/jpeg", 0.90);
+      }, "image/jpeg", 0.85);
     };
     img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
     img.src = url;

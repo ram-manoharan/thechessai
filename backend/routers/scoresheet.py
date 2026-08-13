@@ -114,7 +114,7 @@ async def scan_scoresheet(file: UploadFile = File(...)):
 
     data = await file.read()
     if len(data) > MAX_BYTES:
-        raise HTTPException(413, "File too large. Maximum 10 MB.")
+        raise HTTPException(413, "File too large. Maximum 10 MB. Try taking the photo from further away or exporting at a smaller size.")
 
     ai = _ai()
     if not ai.vision_client:
