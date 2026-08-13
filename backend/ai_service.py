@@ -34,7 +34,7 @@ _PROVIDER_CONFIG = {
         "base_url":     "https://api.together.xyz/v1",
         "api_key":      os.getenv("TOGETHER_API_KEY"),
         "model":        "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-        "vision_model": "Qwen/Qwen2-VL-72B-Instruct",
+        "vision_model": "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
     },
     "fireworks": {
         "base_url":     "https://api.fireworks.ai/inference/v1",
@@ -168,26 +168,43 @@ class AIService:
             logger.info("AIService: provider=%s  model=%s", _PROVIDER, self.model_name)
 
             # ── Vision client (for handwritten notation OCR) ──────────────
-            # Priority: OpenAI (gpt-4o-mini) → Groq (free) → current provider.
+            # VISION_PROVIDER env var pins the choice explicitly.
+            # Without it: OpenAI key → current-provider vision model → Groq (free).
+            # Groq is last because its free tier has strict image-type limits.
+            vision_provider = os.getenv("VISION_PROVIDER", "").strip().lower()
             openai_key = os.getenv("OPENAI_API_KEY")
             groq_key   = os.getenv("GROQ_API_KEY")
-            if openai_key:
+
+            if vision_provider == "openai" and openai_key:
                 self.vision_client = OpenAI(api_key=openai_key)
                 self.vision_model  = "gpt-4o"
-                logger.info("AIService: vision via OpenAI gpt-4o")
-            elif groq_key:
+                logger.info("AIService: vision via OpenAI gpt-4o (pinned)")
+            elif vision_provider == "groq" and groq_key:
                 self.vision_client = OpenAI(
                     api_key=groq_key,
                     base_url="https://api.groq.com/openai/v1",
                 )
                 self.vision_model = "llama-3.2-11b-vision-preview"
-                logger.info("AIService: vision via Groq llama-3.2-11b-vision-preview")
+                logger.info("AIService: vision via Groq llama-3.2-11b-vision-preview (pinned)")
+            elif openai_key and vision_provider != "groq":
+                self.vision_client = OpenAI(api_key=openai_key)
+                self.vision_model  = "gpt-4o"
+                logger.info("AIService: vision via OpenAI gpt-4o")
             else:
+                # Prefer the current provider's vision model over Groq —
+                # Groq free tier blocks images on restricted orgs.
                 v_model = cfg.get("vision_model")
-                if v_model:
+                if v_model and vision_provider != "groq":
                     self.vision_client = self.client
                     self.vision_model  = v_model
                     logger.info("AIService: vision via %s  model=%s", _PROVIDER, v_model)
+                elif groq_key:
+                    self.vision_client = OpenAI(
+                        api_key=groq_key,
+                        base_url="https://api.groq.com/openai/v1",
+                    )
+                    self.vision_model = "llama-3.2-11b-vision-preview"
+                    logger.info("AIService: vision via Groq llama-3.2-11b-vision-preview")
                 else:
                     self.vision_client = None
                     self.vision_model  = None
