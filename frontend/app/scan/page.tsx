@@ -50,7 +50,8 @@ export default function ScanPage() {
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const [editSan, setEditSan] = useState("");
   const [validating, setValidating] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef   = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const applyResult = useCallback(
     (
@@ -235,7 +236,7 @@ export default function ScanPage() {
             </div>
           )}
 
-          {/* Drop zone */}
+          {/* Drop zone / camera picker */}
           {step === "scanning" ? (
             <div
               style={{
@@ -257,93 +258,80 @@ export default function ScanPage() {
                   margin: "0 auto 20px",
                 }}
               />
-              <p
-                style={{
-                  fontSize: 15,
-                  color: "var(--text-secondary)",
-                  margin: 0,
-                }}
-              >
+              <p style={{ fontSize: 15, color: "var(--text-secondary)", margin: 0 }}>
                 Reading your scoresheet…
               </p>
-              <p
-                style={{
-                  fontSize: 12,
-                  color: "var(--text-muted)",
-                  marginTop: 6,
-                }}
-              >
+              <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>
                 This takes 10–20 seconds
               </p>
             </div>
           ) : (
-            <div
-              onDragOver={e => {
-                e.preventDefault();
-                setDragOver(true);
-              }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={onDrop}
-              onClick={() => fileInputRef.current?.click()}
-              style={{
-                border: `2px dashed ${dragOver ? "var(--gold)" : "var(--border-strong)"}`,
-                borderRadius: 14,
-                background: dragOver
-                  ? "rgba(201,162,68,0.06)"
-                  : "var(--bg-surface)",
-                padding: "52px 32px",
-                textAlign: "center",
-                cursor: "pointer",
-                transition: "all 0.18s",
-              }}
-            >
-              <div style={{ fontSize: 36, marginBottom: 14 }}>⬆</div>
-              <p
-                style={{
-                  fontSize: 15,
-                  fontWeight: 600,
-                  color: "var(--text-primary)",
-                  margin: "0 0 6px",
-                }}
-              >
-                Drop your photo here
-              </p>
-              <p
-                style={{
-                  fontSize: 13,
-                  color: "var(--text-muted)",
-                  margin: "0 0 20px",
-                }}
-              >
-                or click to browse
-              </p>
-              <span
-                style={{
-                  display: "inline-block",
-                  padding: "8px 20px",
-                  borderRadius: 8,
-                  background: "var(--gold)",
-                  color: "#000",
-                  fontSize: 13,
-                  fontWeight: 700,
-                  pointerEvents: "none",
-                }}
-              >
-                Choose Photo
-              </span>
-              <p
-                style={{
-                  fontSize: 11,
-                  color: "var(--text-muted)",
-                  marginTop: 16,
-                  marginBottom: 0,
-                }}
-              >
+            <>
+              {/* Two primary CTAs — camera and gallery — work on all devices */}
+              <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+                <button
+                  onClick={() => cameraInputRef.current?.click()}
+                  style={{
+                    flex: 1,
+                    padding: "20px 12px",
+                    borderRadius: 14,
+                    border: "2px solid var(--gold-border)",
+                    background: "var(--gold-subtle)",
+                    cursor: "pointer",
+                    textAlign: "center",
+                    transition: "all 0.18s",
+                  }}
+                >
+                  <div style={{ fontSize: 32, marginBottom: 8 }}>📷</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "var(--gold)", marginBottom: 3 }}>
+                    Take Photo
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                    Use camera
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={onDrop}
+                  style={{
+                    flex: 1,
+                    padding: "20px 12px",
+                    borderRadius: 14,
+                    border: `2px dashed ${dragOver ? "var(--gold)" : "var(--border-strong)"}`,
+                    background: dragOver ? "rgba(201,162,68,0.06)" : "var(--bg-surface)",
+                    cursor: "pointer",
+                    textAlign: "center",
+                    transition: "all 0.18s",
+                  }}
+                >
+                  <div style={{ fontSize: 32, marginBottom: 8 }}>📁</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 3 }}>
+                    Upload File
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                    Gallery · drag & drop
+                  </div>
+                </button>
+              </div>
+              <p style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center", margin: 0 }}>
                 JPEG · PNG · WebP · HEIC · up to 10 MB
               </p>
-            </div>
+            </>
           )}
 
+          {/* Camera capture (opens rear/environment camera on mobile) */}
+          <input
+            ref={cameraInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            style={{ display: "none" }}
+            onChange={onFileChange}
+          />
+          {/* Gallery / file picker (no capture — shows file browser or photo library) */}
           <input
             ref={fileInputRef}
             type="file"

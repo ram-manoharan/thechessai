@@ -693,7 +693,7 @@ function AnalyzePageContent() {
         className="min-h-screen pt-4 pb-12 px-4"
       >
         {/* ── Status bar ─────────────────────────────────────────────────── */}
-        <div className="max-w-7xl mx-auto mb-4 flex items-center gap-3 flex-wrap">
+        <div className="max-w-7xl mx-auto mb-3 flex items-center gap-2 flex-wrap min-w-0">
           <Link
             href="/"
             style={{ color: "var(--text-muted)", fontSize: 12, fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase" }}
@@ -701,17 +701,19 @@ function AnalyzePageContent() {
           >
             {"← Home"}
           </Link>
-          <span style={{ color: "var(--border)" }}>|</span>
-          <OpeningBadge />
-          <span style={{ color: "var(--border)" }}>|</span>
-          <GameMeta />
+          {/* Opening + meta: hidden on small phones to avoid pushing buttons off-screen */}
+          <span className="hidden sm:inline" style={{ color: "var(--border)" }}>|</span>
+          <span className="hidden sm:contents"><OpeningBadge /></span>
+          <span className="hidden sm:inline" style={{ color: "var(--border)" }}>|</span>
+          <span className="hidden sm:contents"><GameMeta /></span>
 
-          <div className="ml-auto flex items-center gap-2">
+          {/* Toolbar — wraps on small screens; Puzzles + Export hidden on mobile */}
+          <div className="ml-auto flex items-center gap-1.5 flex-wrap justify-end min-w-0">
             {analyzing && (
               <div style={{ display: "flex", alignItems: "center", gap: 7,
                 background: movesData.length > 0 ? "rgba(201,162,68,0.08)" : "rgba(91,142,245,0.08)",
                 border: "1px solid " + (movesData.length > 0 ? "rgba(201,162,68,0.25)" : "rgba(91,142,245,0.25)"),
-                borderRadius: 8, padding: "4px 10px",
+                borderRadius: 8, padding: "4px 8px",
               }}>
                 <div style={{ position: "relative", width: 14, height: 14, flexShrink: 0 }}>
                   <div style={{ width: 14, height: 14, border: "1.5px solid " + (movesData.length > 0 ? "rgba(201,162,68,0.25)" : "rgba(91,142,245,0.25)"),
@@ -725,7 +727,8 @@ function AnalyzePageContent() {
                   color: movesData.length > 0 ? "var(--gold)" : "var(--accent-blue)",
                   fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", whiteSpace: "nowrap",
                 }}>
-                  {movesData.length > 0 ? "AI writing report…" : "Stockfish evaluating…"}
+                  <span className="hidden sm:inline">{movesData.length > 0 ? "AI writing report…" : "Stockfish evaluating…"}</span>
+                  <span className="sm:hidden">{movesData.length > 0 ? "AI…" : "♞…"}</span>
                 </span>
               </div>
             )}
@@ -735,11 +738,11 @@ function AnalyzePageContent() {
                 onClick={() => setRightTab("study")}
                 title={aiReport ? "Your coaching report is ready" : "Coaching report is being written"}
                 style={{
-                  display: "flex", alignItems: "center", gap: 6,
+                  display: "flex", alignItems: "center", gap: 5,
                   background: aiReport ? "var(--gold-subtle)" : "var(--bg-elevated)",
                   border: "1px solid " + (aiReport ? "var(--gold-border)" : "var(--border)"),
                   color: aiReport ? "var(--gold)" : "var(--text-muted)",
-                  fontSize: 11, fontWeight: 700, padding: "5px 12px", borderRadius: 8,
+                  fontSize: 11, fontWeight: 700, padding: "5px 10px", borderRadius: 8,
                   cursor: "pointer", letterSpacing: "0.04em", transition: "all 0.2s",
                 }}
                 className="hover:opacity-90 transition-opacity"
@@ -761,11 +764,11 @@ function AnalyzePageContent() {
               style={{
                 background: "var(--gold-subtle)", border: "1px solid var(--gold-border)",
                 color: "var(--gold)", fontSize: 11, fontWeight: 700,
-                padding: "5px 10px", borderRadius: 8, cursor: "pointer",
+                padding: "5px 10px", borderRadius: 8, cursor: "pointer", whiteSpace: "nowrap",
               }}
               className="hover:opacity-80 transition-opacity"
             >
-              {"+ New Game"}
+              {"+ New"}
             </button>
 
             {movesData.length > 0 && (
@@ -775,9 +778,9 @@ function AnalyzePageContent() {
                   style={{
                     background: "var(--bg-elevated)", border: "1px solid var(--border)",
                     color: "var(--text-secondary)", fontSize: 11, fontWeight: 500,
-                    padding: "5px 10px", borderRadius: 8, textDecoration: "none",
+                    padding: "5px 10px", borderRadius: 8, textDecoration: "none", whiteSpace: "nowrap",
                   }}
-                  className="hover:opacity-80 transition-opacity"
+                  className="hidden sm:inline-flex items-center hover:opacity-80 transition-opacity"
                 >
                   {"◉ Puzzles"}
                 </Link>
@@ -789,11 +792,11 @@ function AnalyzePageContent() {
                     color: "var(--text-secondary)", fontSize: 11, fontWeight: 500,
                     padding: "5px 10px", borderRadius: 8,
                     opacity: exporting ? 0.5 : 1,
-                    cursor: exporting ? "not-allowed" : "pointer",
+                    cursor: exporting ? "not-allowed" : "pointer", whiteSpace: "nowrap",
                   }}
-                  className={`hover:opacity-80 transition-opacity${movesData.length > 0 && aiReport && !exporting ? " pgn-export-ready" : ""}`}
+                  className={`hidden sm:inline-flex items-center hover:opacity-80 transition-opacity${movesData.length > 0 && aiReport && !exporting ? " pgn-export-ready" : ""}`}
                 >
-                  {exporting ? "Exporting…" : "⬇ Export Annotated PGN"}
+                  {exporting ? "Exporting…" : "⬇ Export PGN"}
                   {movesData.length > 0 && aiReport && !exporting && (
                     <span style={{
                       display: "inline-block", width: 5, height: 5, borderRadius: "50%",
@@ -816,11 +819,11 @@ function AnalyzePageContent() {
           </div>
         )}
 
-        {/* ── Main two-column layout ─────────────────────────────────────── */}
-        <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-[auto_1fr] gap-6 items-start">
+        {/* ── Main layout: stacked on phones, two-column on tablets/desktop ── */}
+        <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-[auto_1fr] gap-4 md:gap-6 items-start">
 
           {/* ── LEFT: eval bar + board + nav controls ────────────────────── */}
-          <div className="flex flex-col gap-3 w-full lg:max-w-[480px] lg:sticky lg:top-4">
+          <div className="flex flex-col gap-3 w-full md:max-w-[380px] lg:max-w-[480px] md:sticky md:top-4 analyze-board-wrap">
             <div className="flex gap-2 items-stretch">
               <EvalBar />
               <div className="flex-1">
@@ -832,20 +835,8 @@ function AnalyzePageContent() {
             <PeerBenchmarkWidget />
           </div>
 
-          {/* ── RIGHT: fixed-height tabbed analysis panel ────────────────── */}
-          <div
-            style={{
-              height: "calc(100vh - 120px)",
-              minHeight: 400,
-              display: "flex",
-              flexDirection: "column",
-              minWidth: 0,
-              background: "var(--bg-surface)",
-              border: "1px solid var(--border)",
-              borderRadius: 16,
-              overflow: "hidden",
-            }}
-          >
+          {/* ── RIGHT: tabbed analysis panel — fixed height on md+, auto on mobile */}
+          <div className="analysis-right-panel">
             {/* Compact accuracy header */}
             <CompactAccuracy />
 

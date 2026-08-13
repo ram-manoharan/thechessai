@@ -141,6 +141,8 @@
 
 html { scroll-behavior: smooth; }
 
+html { overflow-x: hidden; }
+
 body {
   background: var(--bg-base);
   color: var(--text-primary);
@@ -148,6 +150,7 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   min-height: 100vh;
+  overflow-x: hidden;
 }
 
 /* ── Scrollbars ────────────────────────────────────────────────────────────── */
@@ -278,4 +281,31 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-in, .animate-thinking { animation: none; }
+}
+
+/* ── Analyze page responsive layout ────────────────────────────────────────── */
+
+/* Right analysis panel — auto height on mobile, fixed on md+ */
+.analysis-right-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+  min-height: 420px;
+  /* Mobile: tall enough to be useful but still scrollable as part of page */
+  max-height: 72vh;
+}
+@media (min-width: 768px) {
+  .analysis-right-panel {
+    height: calc(100vh - 120px);
+    max-height: none;
+  }
+}
+
+/* Touch-friendly tap targets on mobile */
+@media (max-width: 767px) {
+  .analyze-board-wrap { touch-action: manipulation; }
 }
