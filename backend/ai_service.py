@@ -837,21 +837,73 @@ Respond with ONLY valid JSON — no markdown, no extra text:
     @staticmethod
     def _preprocess_notation_image(image_bytes: bytes) -> tuple[bytes, str]:
         """
-        Enhance image for OCR: grayscale → contrast boost → sharpen.
-        Returns (processed_bytes, mime_type).  Falls back to original if Pillow
-        is not installed.
+        Enhance image for OCR:
+          1. Fix EXIF orientation (phone photos are often rotated).
+          2. Resize: cap at 1600px longest side (keeps text readable, stays under
+             the 5 MB API limit for vision models); upscale if below 800px shortest.
+          3. Grayscale → AutoContrast → strong contrast + multi-pass sharpening.
+        Falls back to the original bytes if Pillow is unavailable.
         """
         try:
-            from PIL import Image, ImageEnhance, ImageFilter
+            from PIL import Image, ImageEnhance, ImageFilter, ImageOps
             import io
-            img = Image.open(io.BytesIO(image_bytes)).convert("L")   # grayscale
-            img = ImageEnhance.Contrast(img).enhance(2.0)             # boost contrast
-            img = ImageEnhance.Sharpness(img).enhance(2.0)            # sharpen edges
+
+            img = Image.open(io.BytesIO(image_bytes))
+            orig_w, orig_h = img.size
+
+            # 1. Fix EXIF rotation — phone portrait photos are often stored rotated
+            try:
+                from PIL import ExifTags
+                exif = img._getexif()  # type: ignore[attr-defined]
+                if exif:
+                    orient_key = next(
+                        k for k, v in ExifTags.TAGS.items() if v == "Orientation"
+                    )
+                    orient = exif.get(orient_key)
+                    rotate_map = {3: 180, 6: 270, 8: 90}
+                    if orient in rotate_map:
+                        img = img.rotate(rotate_map[orient], expand=True)
+            except Exception:
+                pass
+
+            # Normalise colour mode before resizing
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+
+            # 2. Resize so the longest side is at most 1600 px.
+            #    Also upscale if the shortest side is under 800 px (too small to read).
+            MAX_SIDE = 1600
+            MIN_SHORT = 800
+            w, h = img.size
+            longest, shortest = max(w, h), min(w, h)
+            if longest > MAX_SIDE:
+                scale = MAX_SIDE / longest
+                img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))),
+                                 Image.LANCZOS)
+            elif shortest < MIN_SHORT and shortest > 0:
+                scale = MIN_SHORT / shortest
+                img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))),
+                                 Image.LANCZOS)
+
+            # 3. Grayscale → stretch histogram → strong contrast + sharpening
+            img = img.convert("L")
+            img = ImageOps.autocontrast(img, cutoff=1)      # stretch histogram
+            img = ImageEnhance.Contrast(img).enhance(3.0)   # push ink dark, paper white
+            img = img.filter(ImageFilter.SHARPEN)            # crisp strokes pass 1
+            img = img.filter(ImageFilter.SHARPEN)            # crisp strokes pass 2
+            img = ImageEnhance.Sharpness(img).enhance(2.5)  # final edge pop
+
             img = img.convert("RGB")
             buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=92)
-            return buf.getvalue(), "image/jpeg"
-        except Exception:
+            img.save(buf, format="JPEG", quality=88)
+            result = buf.getvalue()
+            logger.debug(
+                "_preprocess_notation_image: %dx%d → %dx%d, %.1f KB",
+                orig_w, orig_h, img.width, img.height, len(result) / 1024,
+            )
+            return result, "image/jpeg"
+        except Exception as exc:
+            logger.warning("_preprocess_notation_image failed (%s) — using original", exc)
             return image_bytes, "image/jpeg"
 
     def _vision_call(self, b64: str, mime: str, prompt: str,

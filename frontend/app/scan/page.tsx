@@ -19,6 +19,35 @@ const Chessboard = dynamic(
 
 type Step = "upload" | "scanning" | "review" | "confirm";
 
+// Resize a photo to at most MAX_SIDE px on the longest side before uploading.
+// This keeps the network payload small (phones shoot at 4000+ px) and avoids
+// the 5 MB per-image limit on vision APIs.
+const MAX_UPLOAD_SIDE = 1920;
+async function compressForUpload(file: File): Promise<File> {
+  return new Promise(resolve => {
+    const img = new window.Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const { naturalWidth: w, naturalHeight: h } = img;
+      if (Math.max(w, h) <= MAX_UPLOAD_SIDE) { resolve(file); return; }
+      const scale = MAX_UPLOAD_SIDE / Math.max(w, h);
+      const cw = Math.round(w * scale);
+      const ch = Math.round(h * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = cw; canvas.height = ch;
+      canvas.getContext("2d")!.drawImage(img, 0, 0, cw, ch);
+      canvas.toBlob(blob => {
+        if (!blob) { resolve(file); return; }
+        resolve(new File([blob], file.name.replace(/\.[^.]+$/, ".jpg"),
+          { type: "image/jpeg" }));
+      }, "image/jpeg", 0.90);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+
 interface Meta {
   white_name: string;
   black_name: string;
@@ -80,7 +109,8 @@ export default function ScanPage() {
       setScanError(null);
       setStep("scanning");
       try {
-        const result = await scanScoresheet(file);
+        const compressed = await compressForUpload(file);
+        const result = await scanScoresheet(compressed);
         applyResult(result);
         setSelectedIdx(null);
         setStep("review");
