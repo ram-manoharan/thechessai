@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import analysis, imports, profile, user
+from routers import analysis, imports, profile, user, scoresheet
 import db as db_module
 import engine_pool
 
@@ -46,10 +46,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(analysis.router, prefix="/api/analysis", tags=["analysis"])
-app.include_router(imports.router,  prefix="/api/import",   tags=["import"])
-app.include_router(profile.router,  prefix="/api/profile",  tags=["profile"])
-app.include_router(user.router,     prefix="/api/user",     tags=["user"])
+app.include_router(analysis.router,   prefix="/api/analysis",   tags=["analysis"])
+app.include_router(imports.router,    prefix="/api/import",     tags=["import"])
+app.include_router(profile.router,    prefix="/api/profile",    tags=["profile"])
+app.include_router(user.router,       prefix="/api/user",       tags=["user"])
+app.include_router(scoresheet.router, prefix="/api/scoresheet", tags=["scoresheet"])
 
 @app.get("/api/health")
 def health():

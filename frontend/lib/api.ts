@@ -585,6 +585,60 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
   return authedFetch(`${BASE}/api/user/dashboard-summary`);
 }
 
+// ── Scoresheet OCR ───────────────────────────────────────────────────────────
+
+export interface ScoresheetMove {
+  idx: number;
+  move_num: number;
+  side: "White" | "Black";
+  san: string;
+  valid: boolean;
+  fen_before: string;
+}
+
+export interface ScoresheetError {
+  idx: number;
+  move_num: number;
+  side: string;
+  san: string;
+  fen_before: string;
+  reason: string;
+}
+
+export interface ScoresheetResult {
+  moves: ScoresheetMove[];
+  errors: ScoresheetError[];
+  has_errors: boolean;
+  valid_pgn: string | null;
+  notes: string;
+  white_name: string;
+  black_name: string;
+  date: string;
+  result: string;
+}
+
+export async function scanScoresheet(file: File): Promise<ScoresheetResult> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${BASE}/api/scoresheet/scan`, { method: "POST", body: form });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Scan failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function validateScoresheetMoves(
+  moves: string[],
+  meta: { white_name: string; black_name: string; date: string; result: string; event: string },
+): Promise<Pick<ScoresheetResult, "moves" | "errors" | "has_errors" | "valid_pgn">> {
+  return apiFetch(`${BASE}/api/scoresheet/validate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ moves, ...meta }),
+  });
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /** Split a multi-game PGN blob into individual game strings. */

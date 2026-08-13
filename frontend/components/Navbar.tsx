@@ -96,6 +96,14 @@ function AccountMenu() {
             Analyse
           </Link>
           <Link
+            href="/scan"
+            onClick={() => setOpen(false)}
+            style={{ padding: "8px 10px", borderRadius: 6, fontSize: 13, color: "var(--text-secondary)", textDecoration: "none" }}
+            className="block sm:hidden hover:bg-[var(--bg-elevated)]"
+          >
+            Scan
+          </Link>
+          <Link
             href="/puzzles"
             onClick={() => setOpen(false)}
             style={{ padding: "8px 10px", borderRadius: 6, fontSize: 13, color: "var(--text-secondary)", textDecoration: "none" }}
@@ -212,6 +220,7 @@ export function Navbar() {
       {/* Right side */}
       <div className="flex items-center gap-5">
         {navLink("/analyze", "Analyse")}
+        {navLink("/scan", "Scan")}
         {navLink("/profile", "Profile")}
         {navLink("/puzzles", "Puzzles")}
 

@@ -1064,6 +1064,10 @@ Respond with ONLY valid JSON:
             "moves_annotated": moves_annotated,
             "notes":           notes,
             "has_errors":      bool(bad_moves),
+            "white_name":      white_name if white_name != "?" else "",
+            "black_name":      black_name if black_name != "?" else "",
+            "date":            date_str   if date_str != "????.??.??" else "",
+            "result":          result,
         }
 
     # ── Player Profile ────────────────────────────────────────────────────
