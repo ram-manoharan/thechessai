@@ -177,12 +177,27 @@ class AIService:
             anthropic_key = os.getenv("ANTHROPIC_API_KEY")
             self._anthropic_client = None
 
+            google_key = os.getenv("GOOGLE_API_KEY")
+            # Model to use for Google Gemini — env override, else first stable free model.
+            # Preview models (gemini-2.5-*) are NOT supported on the OpenAI-compat endpoint.
+            google_vision_model = (
+                os.getenv("GOOGLE_VISION_MODEL", "").strip()
+                or "gemini-1.5-flash"
+            )
+
             if vision_provider == "anthropic" and anthropic_key:
                 import anthropic as _anthropic
                 self._anthropic_client = _anthropic.Anthropic(api_key=anthropic_key)
                 self.vision_client = "_anthropic"
                 self.vision_model  = "claude-sonnet-5"
                 logger.info("AIService: vision via Anthropic claude-sonnet-5 (pinned)")
+            elif vision_provider == "google" and google_key:
+                self.vision_client = OpenAI(
+                    api_key=google_key,
+                    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+                )
+                self.vision_model = google_vision_model
+                logger.info("AIService: vision via Google Gemini %s (pinned)", google_vision_model)
             elif vision_provider == "openai" and openai_key:
                 self.vision_client = OpenAI(api_key=openai_key)
                 self.vision_model  = "gpt-4o"
@@ -194,6 +209,14 @@ class AIService:
                 )
                 self.vision_model = "llama-3.2-11b-vision-preview"
                 logger.info("AIService: vision via Groq llama-3.2-11b-vision-preview (pinned)")
+            elif google_key:
+                # Auto-select Google Gemini when a key is available — strong free OCR
+                self.vision_client = OpenAI(
+                    api_key=google_key,
+                    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+                )
+                self.vision_model = google_vision_model
+                logger.info("AIService: vision via Google Gemini %s (auto)", google_vision_model)
             elif openai_key and vision_provider != "groq":
                 self.vision_client = OpenAI(api_key=openai_key)
                 self.vision_model  = "gpt-4o"
@@ -202,7 +225,7 @@ class AIService:
                 # Prefer the current provider's vision model over Groq —
                 # Groq free tier blocks images on restricted orgs.
                 v_model = cfg.get("vision_model")
-                if v_model and vision_provider != "groq":
+                if v_model and vision_provider not in ("groq", "google"):
                     self.vision_client = self.client
                     self.vision_model  = v_model
                     logger.info("AIService: vision via %s  model=%s", _PROVIDER, v_model)
