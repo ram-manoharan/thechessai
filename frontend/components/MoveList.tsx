@@ -53,10 +53,22 @@ export function MoveList({ innerClassName, fillHeight, seamless }: {
   const soundEnabled = useGameStore(s => s.soundEnabled);
   const navigateTo   = useGameStore(s => s.navigateTo);
   const activeRef    = useRef<HTMLTableCellElement>(null);
+  const scrollRef    = useRef<HTMLDivElement>(null);
   const [filterErrors, setFilterErrors] = useState(false);
 
   useEffect(() => {
-    activeRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    const cell = activeRef.current;
+    const container = scrollRef.current;
+    if (!cell || !container) return;
+    // Scroll within the list container only — never let scrollIntoView touch the page
+    const cellTop    = cell.offsetTop;
+    const cellBottom = cellTop + cell.offsetHeight;
+    const { scrollTop, clientHeight } = container;
+    if (cellTop < scrollTop) {
+      container.scrollTo({ top: cellTop - 4, behavior: "smooth" });
+    } else if (cellBottom > scrollTop + clientHeight) {
+      container.scrollTo({ top: cellBottom - clientHeight + 4, behavior: "smooth" });
+    }
   }, [currentIdx]);
 
   if (!movesData.length) return null;
@@ -119,6 +131,7 @@ export function MoveList({ innerClassName, fillHeight, seamless }: {
         )}
       </div>
       <div
+        ref={scrollRef}
         className={fillHeight ? "" : (innerClassName ?? "h-[300px]")}
         style={{
           overflowY: "auto",

@@ -58,29 +58,140 @@ export function NavControls() {
 
   if (!movesData.length) return null;
 
-  const btnBase = "h-9 rounded-lg flex items-center justify-center transition-colors text-sm disabled:opacity-25";
-  const btnStyle = {
-    background: "var(--bg-elevated)",
-    border: "1px solid var(--border)",
-    color: "var(--text-primary)",
-  };
   const atStart = currentIdx < 0;
   const atEnd   = currentIdx >= max;
 
-  // Current move label: "Move 34 · Black"
+  // Move label shown in the center counter
   let moveLabel = "Start";
+  let subLabel  = "";
   if (currentIdx >= 0) {
     const fullMove = Math.floor(currentIdx / 2) + 1;
     const side = movesData[currentIdx]?.color === "Black" ? "Black" : "White";
-    moveLabel = `${fullMove} · ${side}`;
+    moveLabel = `${fullMove}`;
+    subLabel  = side;
   }
+
+  // ── Mistake summary ───────────────────────────────────────────────────
+  const mistakeSummary = (() => {
+    const errs = movesData.filter(m => ERROR_CLASSES.some(k => m.classification?.includes(k)));
+    if (!errs.length) return "No errors";
+    const blunders = movesData.filter(m => m.classification?.includes("Blunder")).length;
+    const mistakes = movesData.filter(m => m.classification?.includes("Mistake") && !m.classification?.includes("Blunder")).length;
+    const parts = [];
+    if (blunders) parts.push(`${blunders} blunder${blunders > 1 ? "s" : ""}`);
+    if (mistakes) parts.push(`${mistakes} mistake${mistakes > 1 ? "s" : ""}`);
+    return parts.join(", ");
+  })();
+
+  // ── Shared button style factories ────────────────────────────────────
+  const iconBtnBase = {
+    background: "var(--bg-elevated)",
+    border: "1px solid var(--border)",
+    color: "var(--text-primary)",
+    borderRadius: 8,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    transition: "opacity 0.15s",
+  };
 
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-1.5">
-        {/* Nav buttons */}
-        <button style={btnStyle} className={`${btnBase} w-9`} onClick={() => go(-1)}  disabled={atStart} title="Start (Home)">⏮</button>
-        <button style={btnStyle} className={`${btnBase} w-9`} onClick={() => go(currentIdx - 1)} disabled={atStart} title="Prev (←)">‹</button>
+
+      {/* ── MOBILE nav row: large ← move-counter → ─────────────────────── */}
+      {/* Hidden on md+ (desktop uses the row below) */}
+      <div className="flex md:hidden items-center gap-2">
+        {/* Start */}
+        <button
+          style={{ ...iconBtnBase, width: 36, height: 36, fontSize: 14, opacity: atStart ? 0.25 : 1 }}
+          onClick={() => go(-1)}
+          disabled={atStart}
+          title="Start"
+        >⏮</button>
+
+        {/* Prev — large thumb target */}
+        <button
+          style={{
+            ...iconBtnBase,
+            flex: "0 0 56px",
+            height: 52,
+            fontSize: 28,
+            opacity: atStart ? 0.25 : 1,
+            borderRadius: 10,
+          }}
+          onClick={() => go(currentIdx - 1)}
+          disabled={atStart}
+          title="Previous move"
+        >‹</button>
+
+        {/* Move counter */}
+        <div
+          style={{
+            flex: 1,
+            textAlign: "center",
+            background: "var(--bg-elevated)",
+            border: "1px solid var(--border)",
+            borderRadius: 10,
+            padding: "6px 4px",
+            height: 52,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <span style={{ fontSize: 20, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: "var(--text-primary)", lineHeight: 1 }}>
+            {moveLabel}
+          </span>
+          {subLabel && (
+            <span style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 1, letterSpacing: "0.05em" }}>
+              {subLabel}
+            </span>
+          )}
+        </div>
+
+        {/* Next — large thumb target */}
+        <button
+          style={{
+            ...iconBtnBase,
+            flex: "0 0 56px",
+            height: 52,
+            fontSize: 28,
+            opacity: atEnd ? 0.25 : 1,
+            borderRadius: 10,
+          }}
+          onClick={() => go(currentIdx + 1)}
+          disabled={atEnd}
+          title="Next move"
+        >›</button>
+
+        {/* End */}
+        <button
+          style={{ ...iconBtnBase, width: 36, height: 36, fontSize: 14, opacity: atEnd ? 0.25 : 1 }}
+          onClick={() => go(max)}
+          disabled={atEnd}
+          title="End"
+        >⏭</button>
+      </div>
+
+      {/* ── DESKTOP nav row (unchanged): slider + small buttons ─────────── */}
+      {/* Hidden on mobile */}
+      <div className="hidden md:flex items-center gap-1.5">
+        <button
+          style={{ ...iconBtnBase, width: 36, height: 36, fontSize: 13, opacity: atStart ? 0.25 : 1 }}
+          className="rounded-lg"
+          onClick={() => go(-1)}
+          disabled={atStart}
+          title="Start (Home)"
+        >⏮</button>
+        <button
+          style={{ ...iconBtnBase, width: 36, height: 36, fontSize: 13, opacity: atStart ? 0.25 : 1 }}
+          className="rounded-lg"
+          onClick={() => go(currentIdx - 1)}
+          disabled={atStart}
+          title="Prev (←)"
+        >‹</button>
 
         {/* Slider */}
         <input
@@ -92,8 +203,20 @@ export function NavControls() {
           className="flex-1 accent-blue-500 h-1 cursor-pointer"
         />
 
-        <button style={btnStyle} className={`${btnBase} w-9`} onClick={() => go(currentIdx + 1)} disabled={atEnd} title="Next (→)">›</button>
-        <button style={btnStyle} className={`${btnBase} w-9`} onClick={() => go(max)} disabled={atEnd} title="End (End)">⏭</button>
+        <button
+          style={{ ...iconBtnBase, width: 36, height: 36, fontSize: 13, opacity: atEnd ? 0.25 : 1 }}
+          className="rounded-lg"
+          onClick={() => go(currentIdx + 1)}
+          disabled={atEnd}
+          title="Next (→)"
+        >›</button>
+        <button
+          style={{ ...iconBtnBase, width: 36, height: 36, fontSize: 13, opacity: atEnd ? 0.25 : 1 }}
+          className="rounded-lg"
+          onClick={() => go(max)}
+          disabled={atEnd}
+          title="End (End)"
+        >⏭</button>
 
         {/* Sound toggle */}
         <button
@@ -101,8 +224,10 @@ export function NavControls() {
             background: soundEnabled ? "rgba(79,142,247,0.12)" : "var(--bg-elevated)",
             border: `1px solid ${soundEnabled ? "rgba(79,142,247,0.35)" : "var(--border)"}`,
             color: soundEnabled ? "var(--accent-blue)" : "var(--text-muted)",
+            width: 36, height: 36, borderRadius: 8,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: "pointer",
           }}
-          className={`${btnBase} w-9`}
           onClick={toggleSound}
           title={soundEnabled ? "Mute sounds" : "Enable sounds"}
         >
@@ -111,59 +236,46 @@ export function NavControls() {
 
         {/* Move counter */}
         <span style={{ color: "var(--text-muted)" }} className="text-xs font-mono w-[72px] text-right shrink-0">
-          {moveLabel}
+          {currentIdx >= 0 ? `${Math.floor(currentIdx / 2) + 1} · ${movesData[currentIdx]?.color === "Black" ? "Black" : "White"}` : "Start"}
         </span>
       </div>
 
-      {/* Mistake navigation row */}
+      {/* ── Mistake navigation row (shared, adapts slightly) ────────────── */}
       <div className="flex items-center gap-2">
         <button
           onClick={goPrevMistake}
           disabled={!hasPrevMistake}
-          title="Previous mistake"
           style={{
             background: hasPrevMistake ? "rgba(224,82,82,0.10)" : "var(--bg-elevated)",
             border: `1px solid ${hasPrevMistake ? "rgba(224,82,82,0.30)" : "var(--border)"}`,
             color: hasPrevMistake ? "var(--clr-blunder)" : "var(--text-muted)",
-            fontSize: 11,
             fontWeight: 500,
-            padding: "4px 10px",
             borderRadius: 6,
             cursor: hasPrevMistake ? "pointer" : "not-allowed",
             opacity: hasPrevMistake ? 1 : 0.4,
           }}
+          className="text-xs px-2.5 py-1.5 md:text-[11px] md:px-2.5 md:py-1"
         >
           ← Mistake
         </button>
 
         <span style={{ color: "var(--text-muted)", fontSize: 11, flex: 1, textAlign: "center" }}>
-          {(() => {
-            const errs = movesData.filter(m => ERROR_CLASSES.some(k => m.classification?.includes(k)));
-            if (!errs.length) return "No errors";
-            const blunders  = movesData.filter(m => m.classification?.includes("Blunder")).length;
-            const mistakes  = movesData.filter(m => m.classification?.includes("Mistake") && !m.classification?.includes("Blunder")).length;
-            const parts = [];
-            if (blunders)  parts.push(`${blunders} blunder${blunders > 1 ? "s" : ""}`);
-            if (mistakes)  parts.push(`${mistakes} mistake${mistakes > 1 ? "s" : ""}`);
-            return parts.join(", ");
-          })()}
+          {mistakeSummary}
         </span>
 
         <button
           onClick={goNextMistake}
           disabled={!hasNextMistake}
-          title="Next mistake"
           style={{
             background: hasNextMistake ? "rgba(224,82,82,0.10)" : "var(--bg-elevated)",
             border: `1px solid ${hasNextMistake ? "rgba(224,82,82,0.30)" : "var(--border)"}`,
             color: hasNextMistake ? "var(--clr-blunder)" : "var(--text-muted)",
-            fontSize: 11,
             fontWeight: 500,
-            padding: "4px 10px",
             borderRadius: 6,
             cursor: hasNextMistake ? "pointer" : "not-allowed",
             opacity: hasNextMistake ? 1 : 0.4,
           }}
+          className="text-xs px-2.5 py-1.5 md:text-[11px] md:px-2.5 md:py-1"
         >
           Mistake →
         </button>
