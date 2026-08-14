@@ -520,6 +520,18 @@ async def get_puzzle_stats(user: CurrentUser = Depends(get_current_user)):
             """,
             user.user_id,
         )
+        total_saved = await conn.fetchval(
+            "SELECT COUNT(*) FROM app.saved_puzzle WHERE user_id = $1", user.user_id,
+        )
+        next_due_at = await conn.fetchval(
+            """
+            SELECT MIN(pp.next_review_at)
+            FROM app.saved_puzzle sp
+            JOIN app.puzzle_progress pp ON pp.user_id = sp.user_id AND pp.puzzle_fen = sp.fen
+            WHERE sp.user_id = $1 AND pp.next_review_at > now()
+            """,
+            user.user_id,
+        )
         solve_dates = await conn.fetch(
             "SELECT DISTINCT DATE(solved_at) AS d FROM app.puzzle_progress WHERE user_id=$1 AND solved=true ORDER BY d DESC",
             user.user_id,
@@ -545,7 +557,9 @@ async def get_puzzle_stats(user: CurrentUser = Depends(get_current_user)):
         "today_solved": int(today_solved),
         "total_solved": int(total_solved),
         "queue_size":   int(queue_size),
+        "total_saved":  int(total_saved),
         "session_goal": 5,
+        "next_due_at":  next_due_at.isoformat() if next_due_at else None,
     }
 
 

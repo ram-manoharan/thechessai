@@ -189,7 +189,9 @@ export interface PuzzleStats {
   today_solved: number;
   total_solved: number;
   queue_size:   number;
+  total_saved:  number;
   session_goal: number;
+  next_due_at:  string | null;
 }
 
 export async function getPuzzleStats(): Promise<PuzzleStats> {
