@@ -35,6 +35,12 @@ function formatTimeUntil(isoString: string): string {
   return `${m}m`;
 }
 
+function formatElapsed(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
 function puzzleColor(fen: string): "white" | "black" {
   return fen.split(" ")[1] === "w" ? "white" : "black";
 }
@@ -361,12 +367,15 @@ export default function PuzzlesPage() {
   const [playedSan,      setPlayedSan]      = useState("");
   const [topThemes,      setTopThemes]      = useState<string[]>([]);
   const [wrongAttempts,  setWrongAttempts]  = useState(0);
+  const [autoAdvance,    setAutoAdvance]    = useState(true);
+  const [elapsed,        setElapsed]        = useState(0);
 
   const chessRef      = useRef<Chess | null>(null);
   const autoAdvRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrongTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timerRef      = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const SESSION_GOAL = 5;
+  const SESSION_GOAL = 10;
   const puzzle = puzzles[puzzleIdx] ?? null;
   const sessionCorrect = sessionResults.filter(r => r === "correct").length;
 
@@ -392,9 +401,16 @@ export default function PuzzlesPage() {
 
   useEffect(() => { loadQueue(); }, [loadQueue]);
 
+  useEffect(() => () => {
+    if (autoAdvRef.current)    clearTimeout(autoAdvRef.current);
+    if (wrongTimerRef.current) clearTimeout(wrongTimerRef.current);
+    if (timerRef.current)      clearInterval(timerRef.current);
+  }, []);
+
   const initPuzzle = useCallback((p: PuzzleData, idx: number) => {
     if (autoAdvRef.current)    clearTimeout(autoAdvRef.current);
     if (wrongTimerRef.current) clearTimeout(wrongTimerRef.current);
+    if (timerRef.current)      clearInterval(timerRef.current);
     try {
       chessRef.current = new Chess(p.fen);
     } catch {
@@ -406,7 +422,9 @@ export default function PuzzlesPage() {
     setHintLevel(0);
     setPlayedSan("");
     setWrongAttempts(0);
+    setElapsed(0);
     setPuzzleIdx(idx);
+    timerRef.current = setInterval(() => setElapsed(t => t + 1), 1000);
   }, []);
 
   // ── Hint squares ───────────────────────────────────────────────────────────
@@ -449,6 +467,7 @@ export default function PuzzlesPage() {
 
   const advanceSession = useCallback((result: PuzzleResult, currentIdx: number) => {
     setSessionResults(prev => { const n = [...prev]; n[currentIdx] = result; return n; });
+    if (!autoAdvance) return; // wait for the user to click "Next puzzle"
     if (currentIdx + 1 < puzzles.length) {
       autoAdvRef.current = setTimeout(() => initPuzzle(puzzles[currentIdx + 1], currentIdx + 1), 1600);
     } else {
@@ -457,7 +476,7 @@ export default function PuzzlesPage() {
         getPuzzleStats().then(setStats).catch(() => {});
       }, 1600);
     }
-  }, [puzzles, initPuzzle]);
+  }, [puzzles, initPuzzle, autoAdvance]);
 
   // ── On piece drop ──────────────────────────────────────────────────────────
 
@@ -498,6 +517,7 @@ export default function PuzzlesPage() {
 
       if (isLastMove) {
         // All solution moves found — correct!
+        if (timerRef.current) clearInterval(timerRef.current);
         setSolveState("correct");
         recordProgress(puzzle, true);
         advanceSession("correct", puzzleIdx);
@@ -534,6 +554,7 @@ export default function PuzzlesPage() {
 
   const showSolution = useCallback(() => {
     if (!puzzle) return;
+    if (timerRef.current) clearInterval(timerRef.current);
     const solutionSans = puzzle.solution_sans?.length ? puzzle.solution_sans : [puzzle.best_move_san];
     try {
       const c = new Chess(puzzle.fen);
@@ -554,6 +575,7 @@ export default function PuzzlesPage() {
     if (!puzzle) return;
     if (autoAdvRef.current) clearTimeout(autoAdvRef.current);
     if (wrongTimerRef.current) clearTimeout(wrongTimerRef.current);
+    if (timerRef.current) clearInterval(timerRef.current);
     try { chessRef.current = new Chess(puzzle.fen); } catch { chessRef.current = new Chess(); }
     setFen(puzzle.fen);
     setSolveState("idle");
@@ -561,7 +583,9 @@ export default function PuzzlesPage() {
     setHintLevel(0);
     setPlayedSan("");
     setWrongAttempts(0);
+    setElapsed(0);
     setSessionResults(prev => { const n = [...prev]; n[puzzleIdx] = null; return n; });
+    timerRef.current = setInterval(() => setElapsed(t => t + 1), 1000);
   }, [puzzle, puzzleIdx]);
 
   const handleNavigate = useCallback((idx: number) => {
@@ -580,6 +604,7 @@ export default function PuzzlesPage() {
       initPuzzle(puzzles[puzzleIdx + 1], puzzleIdx + 1);
     } else {
       setSessionDone(true);
+      getPuzzleStats().then(setStats).catch(() => {});
     }
   }, [puzzleIdx, puzzles, sessionResults, initPuzzle]);
 
@@ -752,6 +777,37 @@ export default function PuzzlesPage() {
         {!loading && !error && puzzle && !sessionDone && (
           <>
             <SessionDots results={sessionResults} current={puzzleIdx} total={puzzles.length} onNavigate={handleNavigate} />
+
+            {/* Timer + auto-advance controls */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 14 }}>⏱</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>
+                  {formatElapsed(elapsed)}
+                </span>
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>
+                  Auto-advance{!autoAdvance && " (off — analyze freely)"}
+                </span>
+                <span
+                  onClick={() => setAutoAdvance(a => !a)}
+                  role="switch"
+                  aria-checked={autoAdvance}
+                  style={{
+                    width: 34, height: 19, borderRadius: 10, position: "relative", flexShrink: 0,
+                    background: autoAdvance ? "var(--accent-green)" : "var(--bg-elevated)",
+                    border: `1px solid ${autoAdvance ? "transparent" : "var(--border)"}`,
+                    transition: "background 0.2s ease",
+                  }}>
+                  <span style={{
+                    position: "absolute", top: 2, left: autoAdvance ? 17 : 2,
+                    width: 15, height: 15, borderRadius: "50%", background: "#fff",
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.3)", transition: "left 0.2s ease",
+                  }} />
+                </span>
+              </label>
+            </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_1fr] gap-5 items-start">
               {/* Board */}
