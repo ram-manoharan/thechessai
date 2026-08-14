@@ -413,10 +413,19 @@ export default function PuzzlesPage() {
   // ── Progress recording ─────────────────────────────────────────────────────
 
   const recordProgress = useCallback((p: PuzzleData, solved: boolean) => {
-    if (p.source === "lichess" && p.puzzle_id) {
-      recordPuzzleProgress({ puzzleId: p.puzzle_id, source: "lichess", solved }).catch(() => {});
-    } else if (p.fen) {
-      recordPuzzleProgress({ puzzleFen: p.fen, source: "own_game", solved }).catch(() => {});
+    const promise = p.source === "lichess" && p.puzzle_id
+      ? recordPuzzleProgress({ puzzleId: p.puzzle_id, source: "lichess", solved })
+      : p.fen
+        ? recordPuzzleProgress({ puzzleFen: p.fen, source: "own_game", solved })
+        : Promise.resolve(null);
+    if (solved) {
+      promise
+        .then(res => {
+          if (res) setStats(prev => prev ? { ...prev, total_solved: prev.total_solved + 1, daily_streak: res.streak } : prev);
+        })
+        .catch(() => {});
+    } else {
+      promise.catch(() => {});
     }
   }, []);
 
@@ -427,7 +436,10 @@ export default function PuzzlesPage() {
     if (currentIdx + 1 < puzzles.length) {
       autoAdvRef.current = setTimeout(() => initPuzzle(puzzles[currentIdx + 1], currentIdx + 1), 1600);
     } else {
-      autoAdvRef.current = setTimeout(() => setSessionDone(true), 1600);
+      autoAdvRef.current = setTimeout(() => {
+        setSessionDone(true);
+        getPuzzleStats().then(setStats).catch(() => {});
+      }, 1600);
     }
   }, [puzzles, initPuzzle]);
 
