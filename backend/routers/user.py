@@ -13,12 +13,17 @@ import datetime
 import logging
 from typing import Any, Optional
 
+import chess
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from auth import CurrentUser, get_current_user
 from db import get_pool
+from puzzle_themes import (
+    get_lichess_themes, puzzle_rating_range, EXPLORATION_THEMES,
+    LICHESS_THEME_LABELS, weakness_from_lichess_theme,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -121,7 +126,9 @@ async def update_chess_links(
 
 
 class PuzzleProgressRequest(BaseModel):
-    puzzle_fen: str
+    puzzle_fen: str = ""     # For own-game puzzles (keyed by FEN)
+    puzzle_id:  str = ""     # For Lichess puzzles (keyed by puzzle_id)
+    source:     str = "own_game"   # "own_game" | "lichess"
     solved: bool = True
 
 
@@ -138,6 +145,55 @@ async def record_puzzle_progress(
 ):
     pool = await get_pool()
     async with pool.acquire() as conn:
+        if req.source == "lichess" and req.puzzle_id:
+            # Lichess puzzle progress — FSRS-lite (stability doubles on success)
+            row = await conn.fetchrow(
+                "SELECT solve_count, fail_count, stability FROM app.lichess_puzzle_progress WHERE user_id=$1 AND puzzle_id=$2",
+                user.user_id, req.puzzle_id,
+            )
+            if row:
+                stability = float(row["stability"])
+                solve_count = row["solve_count"]
+                fail_count  = row["fail_count"]
+            else:
+                stability = 1.5
+                solve_count = 0
+                fail_count  = 0
+
+            if req.solved:
+                new_stability = min(stability * 2.0, 90.0)
+                solve_count += 1
+                next_days = new_stability
+            else:
+                new_stability = max(1.5, stability * 0.5)
+                fail_count += 1
+                next_days = 1.0
+
+            await conn.execute(
+                """
+                INSERT INTO app.lichess_puzzle_progress
+                    (user_id, puzzle_id, solved, solve_count, fail_count,
+                     last_solved, stability, next_due)
+                VALUES ($1, $2, $3, $4, $5,
+                        CASE WHEN $3 THEN now() ELSE NULL END, $6,
+                        now() + ($7 * interval '1 day'))
+                ON CONFLICT (user_id, puzzle_id) DO UPDATE SET
+                    solved      = EXCLUDED.solved,
+                    solve_count = EXCLUDED.solve_count,
+                    fail_count  = EXCLUDED.fail_count,
+                    last_solved = CASE WHEN EXCLUDED.solved THEN now()
+                                       ELSE app.lichess_puzzle_progress.last_solved END,
+                    stability   = EXCLUDED.stability,
+                    next_due    = EXCLUDED.next_due
+                """,
+                user.user_id, req.puzzle_id, req.solved,
+                solve_count, fail_count, new_stability, next_days,
+            )
+            return {"ok": True, "streak": solve_count, "next_review_in_days": round(next_days)}
+
+        # Own-game puzzle progress (existing Leitner system)
+        if not req.puzzle_fen:
+            raise HTTPException(400, "puzzle_fen required for own_game puzzles")
         row = await conn.fetchrow(
             "SELECT streak FROM app.puzzle_progress WHERE user_id = $1 AND puzzle_fen = $2",
             user.user_id, req.puzzle_fen,
@@ -215,54 +271,251 @@ async def get_mistake_fingerprint(user: CurrentUser = Depends(get_current_user),
     return {"themes": themes}
 
 
+def _parse_lichess_puzzle(fen: str, moves_str: str) -> dict | None:
+    """Convert a Lichess puzzle (raw FEN + UCI moves) into our unified puzzle dict.
+
+    Lichess encoding:
+      FEN   = position BEFORE the opponent's forcing move
+      moves[0] = opponent's forcing move (auto-apply, shown as context)
+      moves[1], moves[3], … = user's solution moves (what we ask for)
+      moves[2], moves[4], … = opponent auto-responses between solution moves
+    """
+    moves = moves_str.strip().split()
+    if len(moves) < 2:
+        return None
+    try:
+        board = chess.Board(fen)
+        setup_uci  = chess.Move.from_uci(moves[0])
+        setup_san  = board.san(setup_uci)
+        board.push(setup_uci)
+        puzzle_fen = board.fen()
+
+        solution_sans: list[str] = []
+        response_sans: list[str] = []
+        for i, uci in enumerate(moves[1:]):
+            mv = chess.Move.from_uci(uci)
+            san = board.san(mv)
+            board.push(mv)
+            if i % 2 == 0:
+                solution_sans.append(san)
+            else:
+                response_sans.append(san)
+
+        # Full line for post-solve display (setup + all solution/response moves)
+        full_line = [setup_san] + [
+            m for pair in zip(solution_sans, response_sans + [""])
+            for m in pair if m
+        ]
+
+        return {
+            "puzzle_fen":    puzzle_fen,
+            "setup_move_san": setup_san,
+            "solution_sans": solution_sans,
+            "response_sans": response_sans,
+            "best_move_san": solution_sans[0] if solution_sans else "",
+            "continuation":  full_line,
+        }
+    except Exception:
+        return None
+
+
 @router.get("/puzzle-queue")
 async def get_puzzle_queue(user: CurrentUser = Depends(get_current_user), limit: int = 10):
-    """Puzzles due for spaced-repetition practice today, from this user's own
-    analyzed games, prioritized by their top-3 weakness themes."""
+    """Mixed daily puzzle queue:
+
+    1. Own-game puzzles due for spaced-repetition review (highest priority —
+       these come directly from the user's mistakes).
+    2. Lichess DB puzzles targeted to the user's top weakness themes at an
+       ELO-appropriate difficulty (70% weakness-targeted, 30% exploration).
+
+    Lichess puzzles are only shown if the database has been populated via the
+    import script (backend/scripts/import_lichess_puzzles.py).  If the table
+    is empty the endpoint falls back to own-game puzzles only — no error.
+    """
     pool = await get_pool()
     async with pool.acquire() as conn:
+        # ── 1. User's weakness profile ────────────────────────────────────
         theme_rows = await conn.fetch(
             """
             SELECT theme FROM app.mistake_pattern WHERE user_id = $1
-            GROUP BY theme ORDER BY SUM(cp_loss) DESC LIMIT 3
+            GROUP BY theme ORDER BY SUM(cp_loss) DESC LIMIT 5
             """,
             user.user_id,
         )
         top_themes = [r["theme"] for r in theme_rows]
 
-        rows = await conn.fetch(
+        # ── 2. Own-game puzzles due for review ────────────────────────────
+        own_rows = await conn.fetch(
             """
             SELECT sp.fen, sp.best_move_san, sp.continuation, sp.theme, sp.cp_loss, sp.phase,
                    sp.source_white, sp.source_black, sp.source_date,
-                   COALESCE(pp.streak, 0) AS streak,
-                   COALESCE(pp.next_review_at, now()) AS next_review_at
+                   COALESCE(pp.streak, 0) AS streak
             FROM app.saved_puzzle sp
             LEFT JOIN app.puzzle_progress pp ON pp.user_id = sp.user_id AND pp.puzzle_fen = sp.fen
             WHERE sp.user_id = $1
               AND COALESCE(pp.next_review_at, now()) <= now()
-            ORDER BY (sp.theme = ANY($2::text[])) DESC, next_review_at ASC
+            ORDER BY (sp.theme = ANY($2::text[])) DESC,
+                     COALESCE(pp.next_review_at, now()) ASC
             LIMIT $3
             """,
             user.user_id, top_themes, limit,
         )
-    return {
-        "top_themes": top_themes,
-        "puzzles": [
+        puzzles: list[dict] = [
             {
+                "source":        "own_game",
+                "puzzle_id":     None,
                 "fen":           r["fen"],
+                "setup_move_san": None,
+                "solution_sans": [r["best_move_san"]],
+                "response_sans": [],
                 "best_move_san": r["best_move_san"],
-                "continuation":  list(r["continuation"]),
+                "continuation":  list(r["continuation"] or []),
                 "theme":         r["theme"],
+                "themes":        [r["theme"]] if r["theme"] else [],
                 "cp_loss":       r["cp_loss"],
                 "phase":         r["phase"],
                 "game_white":    r["source_white"],
                 "game_black":    r["source_black"],
-                "game_date":     r["source_date"],
+                "game_white_rating": None,
+                "game_black_rating": None,
+                "game_result":   None,
+                "game_event":    None,
+                "game_date":     str(r["source_date"]) if r["source_date"] else "",
+                "lichess_url":   None,
+                "rating":        None,
                 "streak":        r["streak"],
             }
-            for r in rows
-        ],
-    }
+            for r in own_rows
+        ]
+
+        remaining = limit - len(puzzles)
+        if remaining <= 0:
+            return {"top_themes": top_themes, "puzzles": puzzles}
+
+        # ── 3. Check whether Lichess DB has any puzzles ───────────────────
+        lp_count = await conn.fetchval("SELECT COUNT(*) FROM app.lichess_puzzles")
+        if lp_count == 0:
+            return {"top_themes": top_themes, "puzzles": puzzles}
+
+        # ── 4. User's estimated ELO → puzzle rating range ─────────────────
+        elo_row = await conn.fetchrow(
+            """
+            SELECT estimated_elo FROM app.analyzed_game
+            WHERE user_id = $1 AND estimated_elo IS NOT NULL
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            user.user_id,
+        )
+        estimated_elo = int(elo_row["estimated_elo"]) if elo_row else 1200
+        p_min, p_max = puzzle_rating_range(estimated_elo)
+
+        # IDs the user has already seen (not due again yet)
+        seen = await conn.fetch(
+            "SELECT puzzle_id FROM app.lichess_puzzle_progress WHERE user_id=$1 AND next_due > now()",
+            user.user_id,
+        )
+        seen_ids = [r["puzzle_id"] for r in seen]
+
+        # ── 5a. Weakness-targeted Lichess puzzles (70%) ───────────────────
+        n_targeted = max(1, int(remaining * 0.7))
+        lichess_themes: list[str] = []
+        for wt in top_themes[:3]:
+            lichess_themes.extend(get_lichess_themes(wt))
+
+        targeted_rows = []
+        if lichess_themes:
+            targeted_rows = await conn.fetch(
+                """
+                SELECT puzzle_id, fen, moves, rating, themes,
+                       game_white, game_black, game_white_rating, game_black_rating,
+                       game_result, game_event, game_date, game_opening_name, game_url
+                FROM app.lichess_puzzles
+                WHERE themes && $1::text[]
+                  AND rating BETWEEN $2 AND $3
+                  AND rating_deviation < 150
+                  AND popularity > 30
+                  AND NOT (puzzle_id = ANY($4::text[]))
+                ORDER BY random()
+                LIMIT $5
+                """,
+                lichess_themes, p_min, p_max, seen_ids, n_targeted,
+            )
+
+        # ── 5b. Exploration Lichess puzzles (30%) ─────────────────────────
+        n_explore = remaining - len(targeted_rows)
+        explore_rows = []
+        if n_explore > 0:
+            already_ids = seen_ids + [r["puzzle_id"] for r in targeted_rows]
+            explore_rows = await conn.fetch(
+                """
+                SELECT puzzle_id, fen, moves, rating, themes,
+                       game_white, game_black, game_white_rating, game_black_rating,
+                       game_result, game_event, game_date, game_opening_name, game_url
+                FROM app.lichess_puzzles
+                WHERE themes && $1::text[]
+                  AND rating BETWEEN $2 AND $3
+                  AND rating_deviation < 150
+                  AND popularity > 30
+                  AND NOT (puzzle_id = ANY($4::text[]))
+                ORDER BY random()
+                LIMIT $5
+                """,
+                EXPLORATION_THEMES, p_min, p_max, already_ids, n_explore,
+            )
+
+        # ── 6. Parse Lichess puzzles into unified format ──────────────────
+        for r in list(targeted_rows) + list(explore_rows):
+            parsed = _parse_lichess_puzzle(r["fen"], r["moves"])
+            if not parsed:
+                continue
+
+            themes_list = list(r["themes"] or [])
+            primary_theme = weakness_from_lichess_theme(themes_list[0]) if themes_list else "Tactical"
+            theme_label   = LICHESS_THEME_LABELS.get(themes_list[0], primary_theme) if themes_list else "Tactical"
+
+            # Format result for display ("1-0" → "White won", etc.)
+            result_raw = r["game_result"] or ""
+            result_display = {"1-0": "White won", "0-1": "Black won", "1/2-1/2": "Draw"}.get(result_raw, "")
+
+            puzzles.append({
+                "source":        "lichess",
+                "puzzle_id":     r["puzzle_id"],
+                "fen":           parsed["puzzle_fen"],
+                "setup_move_san": parsed["setup_move_san"],
+                "solution_sans": parsed["solution_sans"],
+                "response_sans": parsed["response_sans"],
+                "best_move_san": parsed["best_move_san"],
+                "continuation":  parsed["continuation"],
+                "theme":         primary_theme,
+                "theme_lichess": themes_list[0] if themes_list else "",
+                "theme_label":   theme_label,
+                "themes":        themes_list,
+                "cp_loss":       0,
+                "phase":         _detect_phase_from_themes(themes_list),
+                "game_white":    r["game_white"] or "White",
+                "game_black":    r["game_black"] or "Black",
+                "game_white_rating": r["game_white_rating"],
+                "game_black_rating": r["game_black_rating"],
+                "game_result":   result_raw,
+                "game_result_display": result_display,
+                "game_event":    r["game_event"] or "Lichess",
+                "game_date":     str(r["game_date"]) if r["game_date"] else "",
+                "lichess_url":   r["game_url"],
+                "rating":        r["rating"],
+                "streak":        0,
+            })
+
+    return {"top_themes": top_themes, "puzzles": puzzles}
+
+
+def _detect_phase_from_themes(themes: list[str]) -> str:
+    for t in themes:
+        if t in {"endgame", "rookEndgame", "queenEndgame", "bishopEndgame",
+                 "knightEndgame", "pawnEndgame", "queenRookEndgame"}:
+            return "Endgame"
+        if t in {"opening", "attackingF2F7"}:
+            return "Opening"
+    return "Middlegame"
 
 
 # ── Analyzed-game & profile history (dashboard) ─────────────────────────────

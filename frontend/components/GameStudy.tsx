@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { useSession } from "next-auth/react";
 import { Chess } from "chess.js";
 import type { PieceDropHandlerArgs } from "react-chessboard";
-import type { MoveData, PositionExplanation, explainPosition as ExplainFn, ChatMessage, QueuedPuzzle } from "@/lib/api";
+import type { MoveData, PositionExplanation, explainPosition as ExplainFn, ChatMessage, PuzzleData } from "@/lib/api";
 import { recordPuzzleProgress, chatAboutPosition, getPuzzleQueue } from "@/lib/api";
 import { CLF_CONFIG, THEME_GLOSSARY, eloBandLabel, countQuality } from "@/lib/chess-utils";
 import { useGameStore } from "@/lib/store";
@@ -268,7 +268,7 @@ export function StudyPuzzleModal({
               // fall back to treating the first move as the whole puzzle.
               setSolveState("correct");
               if (sessionStatus === "authenticated") {
-                recordPuzzleProgress(position.fen_before, true).catch(() => {});
+                recordPuzzleProgress({ puzzleFen: position.fen_before, source: "own_game", solved: true }).catch(() => {});
               }
             } finally {
               setAwaitingReply(false);
@@ -279,7 +279,7 @@ export function StudyPuzzleModal({
           if (sessionStatus === "authenticated") {
             // Fire-and-forget — a failed progress write shouldn't block the
             // puzzle UI from showing "Correct!".
-            recordPuzzleProgress(position.fen_before, true).catch(() => {});
+            recordPuzzleProgress({ puzzleFen: position.fen_before, source: "own_game", solved: true }).catch(() => {});
           }
         }
       } else if (puzzleStage === 1) {
@@ -288,7 +288,7 @@ export function StudyPuzzleModal({
         setFollowUpNote(`Close — the sharper follow-up was ${targetSan}, but you'd already found the key idea.`);
         setSolveState("correct");
         if (sessionStatus === "authenticated") {
-          recordPuzzleProgress(position.fen_before, true).catch(() => {});
+          recordPuzzleProgress({ puzzleFen: position.fen_before, source: "own_game", solved: true }).catch(() => {});
         }
       } else {
         setSolveState("wrong");
@@ -941,7 +941,7 @@ export function StudyPanel({
   // queue back-to-back without leaving Study for /puzzles. Reuses the same
   // StudyPuzzleModal as single-position practice, just chained across puzzles.
   const { status: drillSessionStatus } = useSession();
-  const [drillQueue, setDrillQueue] = useState<QueuedPuzzle[] | null>(null);
+  const [drillQueue, setDrillQueue] = useState<PuzzleData[] | null>(null);
   const [drillLoading, setDrillLoading] = useState(false);
   const [drillIndex, setDrillIndex] = useState(0);
   const [drillStreak, setDrillStreak] = useState(0);
@@ -961,7 +961,7 @@ export function StudyPanel({
     if (drillSessionStatus === "authenticated" && drillQueue === null) refreshDrillQueue();
   }, [drillSessionStatus, drillQueue, refreshDrillQueue]);
 
-  function drillPositionFor(q: QueuedPuzzle): StudyPosition {
+  function drillPositionFor(q: PuzzleData): StudyPosition {
     const sideToMove = q.fen.split(" ")[1] === "b" ? "Black" : "White";
     const classification = q.cp_loss >= 200 ? "Blunder" : q.cp_loss >= 90 ? "Mistake" : "Inaccuracy";
     return {

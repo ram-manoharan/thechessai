@@ -23,19 +23,46 @@ export type MoveData = {
 };
 
 export type PuzzleData = {
-  fen:           string;
-  move_number:   number;
-  color:         "White" | "Black";
-  played_san:    string;
-  best_move_san: string;
-  continuation:  string[];
-  classification: string;
-  cp_loss:       number;
-  phase:         string;
-  theme?:        string;
-  game_white:    string;
-  game_black:    string;
-  game_date:     string;
+  // Source
+  source:          "own_game" | "lichess";
+  puzzle_id:       string | null;        // Lichess puzzle ID (null for own-game)
+
+  // Position — fen is the position AFTER the forcing move (ready for user input)
+  fen:             string;
+  color:           "White" | "Black";
+  setup_move_san:  string | null;        // Opponent's forcing move (displayed as context)
+  solution_sans:   string[];             // All user moves to play (multi-move puzzles)
+  response_sans:   string[];             // Auto-played opponent responses
+  best_move_san:   string;               // First solution move (backward compat)
+  continuation:    string[];             // Full solution line for post-solve display
+  rating:          number | null;        // Lichess puzzle difficulty rating
+
+  // Classification (shown before solving; theme name hidden)
+  classification:  string;              // "Blunder" | "Mistake" | "Inaccuracy"
+  cp_loss:         number;
+  phase:           string;
+
+  // Theme (hidden until after solving)
+  theme:           string;              // Our weakness category
+  theme_lichess:   string;              // Raw Lichess theme tag
+  theme_label:     string;             // Human-readable label (shown post-solve)
+  themes:          string[];            // All Lichess theme tags
+
+  // Game context (shown BEFORE solving — our competitive advantage)
+  game_white:          string;
+  game_black:          string;
+  game_white_rating:   number | null;
+  game_black_rating:   number | null;
+  game_result:         string | null;   // "1-0" | "0-1" | "1/2-1/2"
+  game_result_display: string;          // "White won" | "Black won" | "Draw"
+  game_event:          string | null;
+  game_date:           string;
+  lichess_url:         string | null;   // Attribution link
+
+  // Legacy fields (backward compat with own-game flow)
+  move_number:     number;
+  played_san:      string;
+  streak:          number;
 };
 
 export type Opening = { name: string; eco: string };
@@ -414,20 +441,8 @@ export async function getMistakeFingerprint(limit = 5): Promise<{ themes: Mistak
   return authedFetch(`${BASE}/api/user/mistake-fingerprint?limit=${limit}`);
 }
 
-export type QueuedPuzzle = {
-  fen: string;
-  best_move_san: string;
-  continuation: string[];
-  theme: string;
-  cp_loss: number;
-  phase: string;
-  game_white: string;
-  game_black: string;
-  game_date: string;
-  streak: number;
-};
-
-export async function getPuzzleQueue(limit = 10): Promise<{ top_themes: string[]; puzzles: QueuedPuzzle[] }> {
+/** The puzzle queue now returns PuzzleData directly (unified format for own-game + Lichess). */
+export async function getPuzzleQueue(limit = 10): Promise<{ top_themes: string[]; puzzles: PuzzleData[] }> {
   return authedFetch(`${BASE}/api/user/puzzle-queue?limit=${limit}`);
 }
 
@@ -479,12 +494,22 @@ export async function linkChessUsername(params: {
 }
 
 export async function recordPuzzleProgress(
-  puzzleFen: string, solved = true
+  params: {
+    puzzleFen?: string;
+    puzzleId?: string;
+    source?: "own_game" | "lichess";
+    solved: boolean;
+  }
 ): Promise<{ ok: true; streak: number; next_review_in_days: number }> {
   return authedFetch(`${BASE}/api/user/puzzle-progress`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ puzzle_fen: puzzleFen, solved }),
+    body: JSON.stringify({
+      puzzle_fen: params.puzzleFen ?? "",
+      puzzle_id:  params.puzzleId  ?? "",
+      source:     params.source    ?? "own_game",
+      solved:     params.solved,
+    }),
   });
 }
 
