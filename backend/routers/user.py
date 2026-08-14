@@ -757,15 +757,31 @@ async def get_puzzle_stats(user: CurrentUser = Depends(get_current_user)):
     """Streak, today's solved count, total, and queue depth for the daily practice header."""
     pool = await get_pool()
     async with pool.acquire() as conn:
-        today_solved = await conn.fetchval(
+        # Own-game puzzles solved today
+        own_today = await conn.fetchval(
             "SELECT COUNT(*) FROM app.puzzle_progress WHERE user_id = $1 AND solved = true AND DATE(solved_at) = CURRENT_DATE",
             user.user_id,
         )
-        total_solved = await conn.fetchval(
+        # Lichess puzzles solved today
+        lichess_today = await conn.fetchval(
+            "SELECT COUNT(*) FROM app.lichess_puzzle_progress WHERE user_id = $1 AND solved = true AND DATE(last_solved) = CURRENT_DATE",
+            user.user_id,
+        )
+        today_solved = int(own_today) + int(lichess_today)
+
+        # Total solved (all time)
+        own_total = await conn.fetchval(
             "SELECT COUNT(*) FROM app.puzzle_progress WHERE user_id = $1 AND solved = true",
             user.user_id,
         )
-        queue_size = await conn.fetchval(
+        lichess_total = await conn.fetchval(
+            "SELECT COUNT(*) FROM app.lichess_puzzle_progress WHERE user_id = $1 AND solved = true",
+            user.user_id,
+        )
+        total_solved = int(own_total) + int(lichess_total)
+
+        # Queue size = own-game due + Lichess puzzles not yet seen or next_due <= now
+        own_queue = await conn.fetchval(
             """
             SELECT COUNT(*) FROM app.saved_puzzle sp
             LEFT JOIN app.puzzle_progress pp ON pp.user_id = sp.user_id AND pp.puzzle_fen = sp.fen
@@ -773,10 +789,29 @@ async def get_puzzle_stats(user: CurrentUser = Depends(get_current_user)):
             """,
             user.user_id,
         )
+        lichess_queue = await conn.fetchval(
+            """
+            SELECT COUNT(*) FROM app.lichess_puzzles lp
+            WHERE NOT EXISTS (
+                SELECT 1 FROM app.lichess_puzzle_progress lpp
+                WHERE lpp.user_id = $1 AND lpp.puzzle_id = lp.puzzle_id
+                  AND lpp.next_due > NOW()
+            )
+            AND lp.rating BETWEEN 600 AND 2800
+            LIMIT 200
+            """,
+            user.user_id,
+        )
+        queue_size = int(own_queue) + min(int(lichess_queue), 50)
+
         total_saved = await conn.fetchval(
             "SELECT COUNT(*) FROM app.saved_puzzle WHERE user_id = $1", user.user_id,
         )
-        next_due_at = await conn.fetchval(
+        # Total "ever seen" includes own-game saved + Lichess puzzles in the bank
+        lichess_bank = await conn.fetchval("SELECT COUNT(*) FROM app.lichess_puzzles")
+        total_saved = int(total_saved) + int(lichess_bank)
+
+        next_due_own = await conn.fetchval(
             """
             SELECT MIN(pp.next_review_at)
             FROM app.saved_puzzle sp
@@ -785,21 +820,38 @@ async def get_puzzle_stats(user: CurrentUser = Depends(get_current_user)):
             """,
             user.user_id,
         )
-        solve_dates = await conn.fetch(
-            "SELECT DISTINCT DATE(solved_at) AS d FROM app.puzzle_progress WHERE user_id=$1 AND solved=true ORDER BY d DESC",
+        next_due_lichess = await conn.fetchval(
+            "SELECT MIN(next_due) FROM app.lichess_puzzle_progress WHERE user_id = $1 AND next_due > now()",
             user.user_id,
         )
+        # Pick the earlier of the two next-due timestamps
+        if next_due_own and next_due_lichess:
+            next_due_at = min(next_due_own, next_due_lichess)
+        else:
+            next_due_at = next_due_own or next_due_lichess
+
+        # Streak: union both solve-date sets
+        own_dates = await conn.fetch(
+            "SELECT DISTINCT DATE(solved_at) AS d FROM app.puzzle_progress WHERE user_id=$1 AND solved=true",
+            user.user_id,
+        )
+        lichess_dates = await conn.fetch(
+            "SELECT DISTINCT DATE(last_solved) AS d FROM app.lichess_puzzle_progress WHERE user_id=$1 AND solved=true",
+            user.user_id,
+        )
+        all_dates_set = {r["d"] for r in own_dates} | {r["d"] for r in lichess_dates}
+        solve_dates = sorted(all_dates_set, reverse=True)
 
     streak = 0
     if solve_dates:
         today     = datetime.date.today()
         yesterday = today - datetime.timedelta(days=1)
-        first     = solve_dates[0]["d"]
+        first     = solve_dates[0]
         if first in (today, yesterday):
             streak   = 1
             expected = first - datetime.timedelta(days=1)
-            for row in solve_dates[1:]:
-                if row["d"] == expected:
+            for d in solve_dates[1:]:
+                if d == expected:
                     streak  += 1
                     expected -= datetime.timedelta(days=1)
                 else:
