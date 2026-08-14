@@ -210,7 +210,7 @@ function GameContextCard({ puzzle, themes, themeRank }: { puzzle: PuzzleData; th
         </span>
         {/* Classification — severity only, no theme name */}
         {(() => {
-          const key = Object.keys(CLF_COLORS).find(k => puzzle.classification.includes(k));
+          const key = Object.keys(CLF_COLORS).find(k => puzzle.classification?.includes(k));
           const color = key ? CLF_COLORS[key] : "var(--text-muted)";
           return key ? (
             <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 5, background: color + "18", border: `1px solid ${color}40`, color }}>
