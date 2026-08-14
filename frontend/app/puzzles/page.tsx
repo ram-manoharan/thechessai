@@ -115,22 +115,31 @@ function StatsBar({ stats, sessionCorrect }: { stats: PuzzleStats; sessionCorrec
 
 // ── SessionDots ───────────────────────────────────────────────────────────────
 
-function SessionDots({ results, current, total }: { results: PuzzleResult[]; current: number; total: number }) {
+function SessionDots({ results, current, total, onNavigate }: {
+  results: PuzzleResult[]; current: number; total: number; onNavigate: (idx: number) => void;
+}) {
+  const maxReached = results.reduce((max, r, i) => r != null ? Math.max(max, i) : max, current);
   return (
-    <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 18 }}>
+    <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 18, flexWrap: "wrap" }}>
       {Array.from({ length: total }, (_, i) => {
         const r = results[i];
         const active = i === current;
+        const navigable = !active && i <= maxReached;
         const bg = r === "correct" ? "var(--accent-green)" : r === "wrong" ? "var(--clr-blunder)" : active ? "var(--gold)" : "var(--bg-elevated)";
         return (
-          <div key={i} style={{
-            width: 13, height: 13, borderRadius: "50%", flexShrink: 0,
-            background: bg,
-            border: `2px solid ${active ? "var(--gold)" : r ? "transparent" : "var(--border)"}`,
-            boxShadow: active ? "0 0 0 3px rgba(201,162,68,0.2)" : r === "correct" ? "0 0 6px rgba(34,197,94,0.3)" : "none",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            transition: "all 0.3s ease",
-          }}>
+          <div key={i}
+            onClick={navigable ? () => onNavigate(i) : undefined}
+            title={navigable ? "Click to review" : undefined}
+            style={{
+              width: 13, height: 13, borderRadius: "50%", flexShrink: 0,
+              background: bg,
+              border: `2px solid ${active ? "var(--gold)" : r ? "transparent" : "var(--border)"}`,
+              boxShadow: active ? "0 0 0 3px rgba(201,162,68,0.2)" : r === "correct" ? "0 0 6px rgba(34,197,94,0.3)" : "none",
+              cursor: navigable ? "pointer" : "default",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              transition: "all 0.3s ease",
+              transform: navigable ? undefined : "scale(1)",
+            }}>
             {r === "correct" && <span style={{ fontSize: 7, color: "#fff", fontWeight: 900 }}>✓</span>}
             {r === "wrong"   && <span style={{ fontSize: 7, color: "#fff", fontWeight: 900 }}>✗</span>}
           </div>
@@ -139,6 +148,9 @@ function SessionDots({ results, current, total }: { results: PuzzleResult[]; cur
       <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 4, fontVariantNumeric: "tabular-nums" }}>
         Puzzle {current + 1} of {total}
       </span>
+      {current < maxReached && (
+        <span style={{ fontSize: 10, color: "var(--gold)", fontWeight: 600 }}>· reviewing</span>
+      )}
     </div>
   );
 }
@@ -348,9 +360,11 @@ export default function PuzzlesPage() {
   const [sessionDone,    setSessionDone]    = useState(false);
   const [playedSan,      setPlayedSan]      = useState("");
   const [topThemes,      setTopThemes]      = useState<string[]>([]);
+  const [wrongAttempts,  setWrongAttempts]  = useState(0);
 
-  const chessRef   = useRef<Chess | null>(null);
-  const autoAdvRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const chessRef      = useRef<Chess | null>(null);
+  const autoAdvRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wrongTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const SESSION_GOAL = 5;
   const puzzle = puzzles[puzzleIdx] ?? null;
@@ -379,7 +393,8 @@ export default function PuzzlesPage() {
   useEffect(() => { loadQueue(); }, [loadQueue]);
 
   const initPuzzle = useCallback((p: PuzzleData, idx: number) => {
-    if (autoAdvRef.current) clearTimeout(autoAdvRef.current);
+    if (autoAdvRef.current)    clearTimeout(autoAdvRef.current);
+    if (wrongTimerRef.current) clearTimeout(wrongTimerRef.current);
     try {
       chessRef.current = new Chess(p.fen);
     } catch {
@@ -390,6 +405,7 @@ export default function PuzzlesPage() {
     setSolutionStep(0);
     setHintLevel(0);
     setPlayedSan("");
+    setWrongAttempts(0);
     setPuzzleIdx(idx);
   }, []);
 
@@ -460,17 +476,21 @@ export default function PuzzlesPage() {
       const isCorrectMove = san === expectedSan;
 
       if (!isCorrectMove) {
-        // Wrong move — snap back
+        // Wrong move — snap back piece, flash briefly, let user try again
         chessRef.current.undo();
-        setFen(fen); // unchanged
+        setFen(fen);
+        setPlayedSan(san);
+        setWrongAttempts(a => a + 1);
         setSolveState("wrong");
-        if (solutionStep === 0) {
-          recordProgress(puzzle, false);
-          advanceSession("wrong", puzzleIdx);
-        }
+        if (wrongTimerRef.current) clearTimeout(wrongTimerRef.current);
+        wrongTimerRef.current = setTimeout(
+          () => setSolveState(s => s === "wrong" ? "idle" : s), 950
+        );
         return false;
       }
 
+      // Correct move — clear any wrong flash
+      if (wrongTimerRef.current) { clearTimeout(wrongTimerRef.current); wrongTimerRef.current = null; }
       setFen(newFen);
 
       const nextStep = solutionStep + 1;
@@ -533,14 +553,22 @@ export default function PuzzlesPage() {
   const retryPuzzle = useCallback(() => {
     if (!puzzle) return;
     if (autoAdvRef.current) clearTimeout(autoAdvRef.current);
+    if (wrongTimerRef.current) clearTimeout(wrongTimerRef.current);
     try { chessRef.current = new Chess(puzzle.fen); } catch { chessRef.current = new Chess(); }
     setFen(puzzle.fen);
     setSolveState("idle");
     setSolutionStep(0);
     setHintLevel(0);
     setPlayedSan("");
+    setWrongAttempts(0);
     setSessionResults(prev => { const n = [...prev]; n[puzzleIdx] = null; return n; });
   }, [puzzle, puzzleIdx]);
+
+  const handleNavigate = useCallback((idx: number) => {
+    if (autoAdvRef.current)    clearTimeout(autoAdvRef.current);
+    if (wrongTimerRef.current) clearTimeout(wrongTimerRef.current);
+    initPuzzle(puzzles[idx], idx);
+  }, [puzzles, initPuzzle]);
 
   const handleNext = useCallback(() => {
     if (autoAdvRef.current) clearTimeout(autoAdvRef.current);
@@ -723,7 +751,7 @@ export default function PuzzlesPage() {
         {/* ── ACTIVE PUZZLE ────────────────────────────────────────────── */}
         {!loading && !error && puzzle && !sessionDone && (
           <>
-            <SessionDots results={sessionResults} current={puzzleIdx} total={puzzles.length} />
+            <SessionDots results={sessionResults} current={puzzleIdx} total={puzzles.length} onNavigate={handleNavigate} />
 
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_1fr] gap-5 items-start">
               {/* Board */}
@@ -731,7 +759,7 @@ export default function PuzzlesPage() {
                 <Chessboard options={{
                   position: fen,
                   boardOrientation: puzzleColor(puzzle.fen) as "white" | "black",
-                  canDragPiece: () => solveState === "idle",
+                  canDragPiece: () => solveState === "idle" || solveState === "wrong",
                   onPieceDrop,
                   squareStyles: hintSquares,
                   boardStyle: { borderRadius: "var(--board-radius)", boxShadow: "var(--shadow-lg)" },
@@ -765,27 +793,56 @@ export default function PuzzlesPage() {
                 {/* Game context — shown BEFORE solving */}
                 <GameContextCard puzzle={puzzle} themes={themes} themeRank={themeRank} />
 
-                {/* Feedback / result card */}
-                {(solveState === "correct" || solveState === "wrong" || solveState === "shown") && (
+                {/* Wrong move flash — brief, NO solution revealed */}
+                {solveState === "wrong" && (
+                  <div key={`wrong-${wrongAttempts}`} style={{
+                    background: "rgba(224,82,82,0.08)", border: "1px solid rgba(224,82,82,0.25)",
+                    borderRadius: 10, padding: "12px 14px", animation: "fade-up 0.2s ease both",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 16, color: "var(--clr-blunder)" }}>✗</span>
+                      <span style={{ fontWeight: 700, fontSize: 13, color: "var(--clr-blunder)" }}>
+                        Not quite{playedSan ? ` — ${playedSan} isn't the move` : ""}. Try again!
+                      </span>
+                    </div>
+                    {wrongAttempts >= 2 && (
+                      <p style={{ fontSize: 11, color: "var(--text-muted)", margin: "6px 0 0" }}>
+                        Use the hint button below if you&apos;re stuck.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Partial correct state */}
+                {solveState === "partial" && (
+                  <div style={{ background: "rgba(201,162,68,0.08)", border: "1px solid rgba(201,162,68,0.25)", borderRadius: 10, padding: "10px 14px", animation: "pop-in 0.3s ease both" }}>
+                    <p style={{ fontSize: 13, fontWeight: 700, color: "var(--gold-light)", margin: 0 }}>
+                      ✓ Good move! Now find the follow-up…
+                    </p>
+                  </div>
+                )}
+
+                {/* Correct / solution-shown: full reveal */}
+                {(solveState === "correct" || solveState === "shown") && (
                   <div
                     key={`${puzzleIdx}-${solveState}`}
                     style={{
-                      background: solveState === "correct" ? "rgba(34,197,94,0.09)" : solveState === "wrong" ? "rgba(224,82,82,0.09)" : "rgba(201,162,68,0.09)",
-                      border: "1px solid " + (solveState === "correct" ? "rgba(34,197,94,0.3)" : solveState === "wrong" ? "rgba(224,82,82,0.3)" : "rgba(201,162,68,0.3)"),
+                      background: solveState === "correct" ? "rgba(34,197,94,0.09)" : "rgba(201,162,68,0.09)",
+                      border: "1px solid " + (solveState === "correct" ? "rgba(34,197,94,0.3)" : "rgba(201,162,68,0.3)"),
                       borderRadius: 12, padding: 16,
                       animation: solveState === "correct" ? "pop-in 0.4s cubic-bezier(0.34,1.56,0.64,1) both" : "fade-up 0.3s ease both",
                     }}>
                     {/* Result header */}
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                      <span style={{ fontSize: 18, color: solveState === "correct" ? "var(--accent-green)" : solveState === "wrong" ? "var(--clr-blunder)" : "var(--gold)" }}>
-                        {solveState === "correct" ? "✓" : solveState === "wrong" ? "✗" : "◈"}
+                      <span style={{ fontSize: 18, color: solveState === "correct" ? "var(--accent-green)" : "var(--gold)" }}>
+                        {solveState === "correct" ? "✓" : "◈"}
                       </span>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: solveState === "correct" ? "var(--accent-green)" : solveState === "wrong" ? "var(--clr-blunder)" : "var(--gold-light)" }}>
-                        {solveState === "correct" ? "Correct!" : solveState === "wrong" ? `Not quite — you played ${playedSan}` : "Here's the solution"}
+                      <span style={{ fontSize: 13, fontWeight: 700, color: solveState === "correct" ? "var(--accent-green)" : "var(--gold-light)" }}>
+                        {solveState === "correct" ? "Correct!" : "Here's the solution"}
                       </span>
                     </div>
 
-                    {/* Best move */}
+                    {/* Best move(s) */}
                     <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
                       <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Best:</span>
                       <span style={{ fontFamily: "monospace", fontWeight: 800, fontSize: 14, color: "var(--accent-green)" }}>
@@ -800,19 +857,10 @@ export default function PuzzlesPage() {
                       <SolutionLine line={puzzle.continuation} solvedUpTo={solvedUpTo} />
                     )}
 
-                    {/* Theme reveal — ONLY after solving */}
+                    {/* Theme reveal */}
                     <div style={{ marginTop: 14 }}>
                       <ThemeReveal puzzle={puzzle} />
                     </div>
-                  </div>
-                )}
-
-                {/* Partial correct state hint */}
-                {solveState === "partial" && (
-                  <div style={{ background: "rgba(201,162,68,0.08)", border: "1px solid rgba(201,162,68,0.25)", borderRadius: 10, padding: "10px 14px", animation: "pop-in 0.3s ease both" }}>
-                    <p style={{ fontSize: 13, fontWeight: 700, color: "var(--gold-light)", margin: 0 }}>
-                      ✓ Good move! Now find the follow-up…
-                    </p>
                   </div>
                 )}
 
@@ -846,7 +894,8 @@ export default function PuzzlesPage() {
 
                 {/* Action buttons */}
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", paddingTop: 4 }}>
-                  {solveState === "idle" && (
+                  {/* Hint + Show solution: available while still solving */}
+                  {(solveState === "idle" || solveState === "wrong" || solveState === "partial") && (
                     <>
                       <button onClick={() => setHintLevel(l => Math.min(l + 1, 2))} disabled={hintLevel >= 2}
                         style={{ padding: "8px 14px", borderRadius: 8, fontSize: 12, cursor: hintLevel >= 2 ? "default" : "pointer", background: hintLevel > 0 ? "rgba(201,162,68,0.1)" : "var(--bg-elevated)", border: `1px solid ${hintLevel > 0 ? "rgba(201,162,68,0.35)" : "var(--border)"}`, color: hintLevel > 0 ? "var(--gold-light)" : "var(--text-secondary)", opacity: hintLevel >= 2 ? 0.5 : 1 }}>
@@ -857,12 +906,8 @@ export default function PuzzlesPage() {
                       </button>
                     </>
                   )}
-                  {solveState === "wrong" && (
-                    <button onClick={retryPuzzle} style={{ padding: "8px 14px", borderRadius: 8, fontSize: 12, cursor: "pointer", background: "rgba(224,82,82,0.08)", border: "1px solid rgba(224,82,82,0.3)", color: "var(--clr-blunder)" }}>
-                      ↺ Try again
-                    </button>
-                  )}
-                  {(solveState === "correct" || solveState === "wrong" || solveState === "shown") && (
+                  {/* Next / Finish: after correct solve or solution revealed */}
+                  {(solveState === "correct" || solveState === "shown") && (
                     <button onClick={handleNext} className="btn-gold" style={{ padding: "8px 18px", borderRadius: 8, fontSize: 12, cursor: "pointer" }}>
                       {puzzleIdx < puzzles.length - 1 ? "Next puzzle →" : "Finish →"}
                     </button>
