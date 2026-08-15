@@ -12,14 +12,14 @@ databases:
     plan: basic-256mb
     region: oregon
     postgresMajorVersion: "16"
-    # Render-managed PgBouncer in front of this database -- db.py's pool
-    # (asyncpg, max_size=20) previously connected DIRECTLY to Postgres
-    # despite a comment claiming it was "already pooled via PgBouncer" (it
-    # wasn't -- no PgBouncer existed anywhere in this file). This closes
-    # that gap for free, no self-hosted PgBouncer service needed. Enabling
-    # this restarts the database on the next Blueprint sync -- expect a
-    # brief connection blip then, not silently.
-    connectionPool: pgbouncer
+    # REVERTED -- attempted Render-managed PgBouncer here (connectionPool:
+    # pgbouncer + DATABASE_URL via connectionPoolString below), but it took
+    # the live web service down: asyncpg.create_pool() failed at startup
+    # with ConnectionRefusedError on every attempt, crash-looping the
+    # instance. Root cause not confirmed (pooler not actually listening on
+    # this plan tier vs. some sync-timing issue) -- reverted to a direct
+    # connection to restore service first, worth re-investigating
+    # separately, off the critical path, before trying again.
 
 services:
   - type: redis
@@ -71,11 +71,10 @@ services:
       - key: DATABASE_URL
         fromDatabase:
           name: chessai-db
-          # connectionPoolString (not connectionString) -- routes through
-          # the connectionPool: pgbouncer above instead of connecting to
-          # Postgres directly. Depends on that field actually taking effect
-          # on next sync -- verify in the dashboard after deploying.
-          property: connectionPoolString
+          # Direct connection -- see the REVERTED note on chessai-db above.
+          # connectionPoolString took the service down; back to this known-
+          # working value until that's debugged separately.
+          property: connectionString
       - key: REDIS_URL
         fromService:
           type: redis

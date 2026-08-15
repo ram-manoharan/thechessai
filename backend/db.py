@@ -30,11 +30,11 @@ async def get_pool() -> asyncpg.Pool:
             # several analysis requests run genuinely concurrently instead of
             # queueing one at a time, so more requests can be mid-flight and
             # touching the DB (mistake_pattern/analyzed_game writes, profile
-            # cache reads) at once. Cheap to raise as long as DATABASE_URL is
-            # actually the pooled connection string (render.yaml's
-            # `connectionPool: pgbouncer` + `connectionPoolString` property)
-            # rather than a direct one -- verify that's live before assuming
-            # idle connections here are free.
+            # cache reads) at once. DATABASE_URL is a DIRECT connection
+            # (render.yaml's `connectionPool: pgbouncer` was tried and
+            # reverted -- took the service down, see render.yaml's note), so
+            # each of these 20 is a real Postgres connection, not a pooled
+            # one -- worth re-checking this number if that's revisited.
             max_size=20,
             command_timeout=10,
         )
