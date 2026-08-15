@@ -4,6 +4,7 @@ import { HeroCTA } from "@/components/landing/HeroCTA";
 import { Reveal } from "@/components/landing/Reveal";
 import { StudySpotlight } from "@/components/landing/StudySpotlight";
 import { ProfileSpotlight } from "@/components/landing/ProfileSpotlight";
+import { ReplaySpotlight } from "@/components/landing/ReplaySpotlight";
 import { HeroChatDemo } from "@/components/landing/HeroChatDemo";
 import { HowItWorks } from "@/components/landing/HowItWorks";
 
@@ -76,6 +77,13 @@ const FEATURES = [
     title: "AI-Annotated PGN Export",
     desc: "Download your analysed game as a fully annotated PGN — NAG symbols, engine evals, and AI coaching notes embedded. Open it in Chessbase, Lichess, or any chess software for offline study.",
     accent: "var(--gold)",
+    isAI: true,
+  },
+  {
+    icon: "🧪",
+    title: "Replay Against an AI Opponent",
+    desc: "Land on your blunder and replay it against an AI trained on real human games — matched to your opponent's exact rating and their mistakes in this game.",
+    accent: "var(--accent-blue)",
     isAI: true,
   },
 ];
@@ -196,6 +204,13 @@ export default function Home() {
         <section className="max-w-5xl mx-auto px-6 py-6 pb-20">
           <Reveal>
             <ProfileSpotlight />
+          </Reveal>
+        </section>
+
+        {/* ── Spotlight: Replay Against an AI Opponent ─────────────────── */}
+        <section className="max-w-5xl mx-auto px-6 py-6 pb-20">
+          <Reveal>
+            <ReplaySpotlight />
           </Reveal>
         </section>
 
