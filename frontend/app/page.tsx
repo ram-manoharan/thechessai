@@ -5,6 +5,7 @@ import { Reveal } from "@/components/landing/Reveal";
 import { FeatureShowcase } from "@/components/landing/FeatureShowcase";
 import { HeroChatDemo } from "@/components/landing/HeroChatDemo";
 import { HowItWorks } from "@/components/landing/HowItWorks";
+import { PlatformStats } from "@/components/landing/PlatformStats";
 
 const FEATURES = [
   {
@@ -168,6 +169,13 @@ export default function Home() {
             </div>
 
           </div>
+        </section>
+
+        {/* ── Platform stats pitch ─────────────────────────────────────── */}
+        <section className="max-w-4xl mx-auto px-6 pb-8">
+          <Reveal delay={0.05}>
+            <PlatformStats />
+          </Reveal>
         </section>
 
         {/* ── How it works ─────────────────────────────────────────────── */}

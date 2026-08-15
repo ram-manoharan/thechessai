@@ -383,6 +383,30 @@ async def _persist_mistake(user_id: str, theme: str, phase: str, cp_loss: int, f
         logger.warning("Failed to persist mistake_pattern for user %s: %s", user_id, e)
 
 
+async def _link_explanation_to_mistake_event(user_id: str, fen_before: str, move_san: str, player_reasoning: Optional[str]) -> None:
+    """Best-effort completion of the mistake_event row (see routers/user.py's
+    save_analyzed_game) this explanation was for, if that game was ever
+    saved: marks explanation_shown and records what the player said they
+    were thinking, if anything, before being told. No-op if the row doesn't
+    exist (e.g. the game was analyzed anonymously and never saved)."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE app.mistake_event SET explanation_shown = TRUE, user_response = $3
+                WHERE id = (
+                    SELECT id FROM app.mistake_event
+                    WHERE user_id = $1 AND fen_before = $2 AND move_san = $4 AND NOT explanation_shown
+                    ORDER BY occurred_at DESC LIMIT 1
+                )
+                """,
+                user_id, fen_before, player_reasoning, move_san,
+            )
+    except Exception as e:
+        logger.warning("Failed to link explanation to mistake_event for user %s: %s", user_id, e)
+
+
 @router.post("/position/explain")
 async def explain_position(req: ExplainRequest, user: Optional[CurrentUser] = Depends(get_current_user_optional)):
     """Generate a position-specific AI explanation: why the played move is bad and why the best move is good.
@@ -414,6 +438,10 @@ async def explain_position(req: ExplainRequest, user: Optional[CurrentUser] = De
         if user and result.get("theme"):
             await _persist_mistake(
                 user.user_id, result["theme"], req.phase, req.cp_loss, req.fen, req.played_move,
+            )
+        if user:
+            await _link_explanation_to_mistake_event(
+                user.user_id, req.fen, req.played_move, req.player_reasoning,
             )
 
         return result

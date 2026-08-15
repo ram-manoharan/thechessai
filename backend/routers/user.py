@@ -24,6 +24,11 @@ from puzzle_themes import (
     get_lichess_themes, puzzle_rating_range, EXPLORATION_THEMES,
     LICHESS_THEME_LABELS, weakness_from_lichess_theme,
 )
+from chess_analysis import classify_tactical_theme
+from mistake_features import extract_position_features
+from ai_service import elo_band
+import cohort_service
+import mistake_jobs
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -223,37 +228,50 @@ async def record_puzzle_progress(
 
 @router.get("/mistake-fingerprint")
 async def get_mistake_fingerprint(user: CurrentUser = Depends(get_current_user), limit: int = 5):
-    """Per-user aggregation of app.mistake_pattern — which tactical/positional
+    """Per-user aggregation of app.mistake_event — which tactical/positional
     themes cost this player the most, ranked by total cp lost (a proxy for
     Elo impact) rather than raw frequency, so one costly recurring pattern
     outranks several trivial ones. Drives both the coaching-report summary
     and the puzzle queue's prioritization below.
 
+    Reads app.mistake_event (populated automatically for every flagged move
+    of every saved game, see routers/user.py's save_analyzed_game), not the
+    older app.mistake_pattern (which only ever sees a move a user explicitly
+    clicked "explain" on, and is left untouched — still fed by
+    /position/explain — for that narrower use).
+
     Each theme also carries `recent_occurrences` (last 30 days, vs the
-    lifetime `occurrences` total) and a `sparkline` of up to the last 8
-    cp_loss values in chronological order — so the fingerprint reads as a
-    trend (getting better/worse at this pattern) instead of a static list."""
+    lifetime `occurrences` total), a `sparkline` of up to the last 8
+    cp_loss values in chronological order, and an optional `cohort` field —
+    an anonymized "players at your level typically miss this too" stat,
+    None when the sample size is too small to be meaningful (see
+    cohort_service.py)."""
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT theme, COUNT(*) AS occurrences, AVG(cp_loss) AS avg_cp_loss, SUM(cp_loss) AS total_cp_loss,
+            SELECT tactical_theme AS theme, COUNT(*) AS occurrences, AVG(cp_loss) AS avg_cp_loss, SUM(cp_loss) AS total_cp_loss,
                    COUNT(*) FILTER (WHERE occurred_at >= now() - interval '30 days') AS recent_occurrences
-            FROM app.mistake_pattern
-            WHERE user_id = $1
-            GROUP BY theme
+            FROM app.mistake_event
+            WHERE user_id = $1 AND tactical_theme IS NOT NULL
+            GROUP BY tactical_theme
             ORDER BY SUM(cp_loss) DESC
             LIMIT $2
             """,
             user.user_id, limit,
         )
 
+        user_band = await conn.fetchval(
+            "SELECT elo_band FROM app.mistake_event WHERE user_id = $1 AND elo_band IS NOT NULL ORDER BY occurred_at DESC LIMIT 1",
+            user.user_id,
+        )
+
         themes = []
         for r in rows:
             spark_rows = await conn.fetch(
                 """
-                SELECT cp_loss FROM app.mistake_pattern
-                WHERE user_id = $1 AND theme = $2
+                SELECT cp_loss FROM app.mistake_event
+                WHERE user_id = $1 AND tactical_theme = $2
                 ORDER BY occurred_at DESC
                 LIMIT 8
                 """,
@@ -266,6 +284,7 @@ async def get_mistake_fingerprint(user: CurrentUser = Depends(get_current_user),
                 "avg_cp_loss":        round(float(r["avg_cp_loss"]), 1),
                 "total_cp_loss":      r["total_cp_loss"],
                 "sparkline":          [sr["cp_loss"] for sr in reversed(spark_rows)],
+                "cohort":             await cohort_service.get_cohort_stats(user_band, r["theme"]),
             })
 
     return {"themes": themes}
@@ -335,10 +354,17 @@ async def get_puzzle_queue(user: CurrentUser = Depends(get_current_user), limit:
     pool = await get_pool()
     async with pool.acquire() as conn:
         # ── 1. User's weakness profile ────────────────────────────────────
+        # mistake_event's tactical_theme uses the same deterministic
+        # classify_tactical_theme() vocabulary as saved_puzzle.theme below,
+        # so the ANY($2::text[]) weighting a few lines down actually
+        # matches now (mistake_pattern.theme was LLM free text from
+        # /position/explain, which barely overlapped with saved_puzzle's
+        # fixed vocabulary -- that comparison was close to a no-op before).
         theme_rows = await conn.fetch(
             """
-            SELECT theme FROM app.mistake_pattern WHERE user_id = $1
-            GROUP BY theme ORDER BY SUM(cp_loss) DESC LIMIT 5
+            SELECT tactical_theme AS theme FROM app.mistake_event
+            WHERE user_id = $1 AND tactical_theme IS NOT NULL
+            GROUP BY tactical_theme ORDER BY SUM(cp_loss) DESC LIMIT 5
             """,
             user.user_id,
         )
@@ -532,6 +558,100 @@ def _detect_phase_from_themes(themes: list[str]) -> str:
 # finishes, to save the finished result. Reading it back is then a pure
 # hydration (no Stockfish/AI recompute), which is the whole point.
 
+# ── Mistake ledger ("Recurrence Engine") ─────────────────────────────────────
+#
+# Populated automatically for every flagged move of the signed-in player's
+# OWN moves, right alongside the analyzed_game save below — not just when a
+# user clicks "explain" on one move (that's the older app.mistake_pattern,
+# fed only by /position/explain in routers/analysis.py, left untouched).
+
+_FLAGGED_CLASSIFICATIONS = ("Blunder", "Mistake", "Inaccuracy")
+
+
+async def _persist_mistake_events(
+    conn, user_id: str, game_id: int, player_color: str,
+    estimated_elo: Optional[int], moves_data: list, positions: list,
+) -> list[tuple[int, Optional[str]]]:
+    """Idempotent: fully replaces this game's mistake_event rows every save,
+    mirroring analyzed_game's own ON CONFLICT DO UPDATE upsert semantics on
+    re-analysis. Only captures the signed-in player's own flagged moves
+    (matches _estimate_game_elo's existing player-only filter elsewhere in
+    this codebase) -- this is a self-improvement ledger, not an
+    opponent-mistake tracker. Returns the (id, tactical_theme) pairs
+    inserted, for the recurrence-linking pass and the cognitive-error
+    backfill job that follow."""
+    await conn.execute("DELETE FROM app.mistake_event WHERE game_id = $1", game_id)
+    player_cap = player_color.capitalize()
+    band = elo_band(estimated_elo)
+    inserted: list[tuple[int, Optional[str]]] = []
+
+    for i, m in enumerate(moves_data):
+        if m.get("color") != player_cap:
+            continue
+        classification = m.get("classification", "")
+        if not any(k in classification for k in _FLAGGED_CLASSIFICATIONS):
+            continue
+        fen_before = positions[i] if i < len(positions) else None
+        if not fen_before:
+            continue
+        fen_after = m.get("fen") or (positions[i + 1] if i + 1 < len(positions) else fen_before)
+        move_san = m.get("move_san") or m.get("san", "")
+        if not move_san:
+            continue
+        best_move_san = m.get("best_move_san")
+
+        theme = None
+        try:
+            if best_move_san:
+                best_uci = chess.Board(fen_before).parse_san(best_move_san).uci()
+                theme = classify_tactical_theme(fen_before, best_uci, m.get("phase", "Middlegame"))
+        except Exception:
+            logger.warning("mistake_event theme classification failed: game=%s ply=%s", game_id, i, exc_info=True)
+
+        try:
+            features = extract_position_features(fen_before, move_san)
+        except Exception:
+            logger.warning("mistake_event position_features failed: game=%s ply=%s", game_id, i, exc_info=True)
+            features = {}
+
+        row = await conn.fetchrow(
+            """
+            INSERT INTO app.mistake_event
+                (user_id, game_id, move_number, color, ply, fen_before, fen_after,
+                 move_san, best_move_san, classification, cp_loss, phase,
+                 tactical_theme, position_features, elo_band)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15)
+            RETURNING id
+            """,
+            user_id, game_id, m.get("move_number", 0), player_cap, i, fen_before, fen_after,
+            move_san, best_move_san, classification, m.get("cp_loss", 0), m.get("phase"),
+            theme, json.dumps(features), band,
+        )
+        inserted.append((row["id"], theme))
+
+    # Phase 2: recurrence linking. Excludes this same game (game_id <> $3)
+    # so a game with the same theme twice doesn't link to itself, and the
+    # NOT EXISTS clause keeps each historical mistake cited as "the previous
+    # occurrence" at most once, forming a clean chain rather than every
+    # later mistake fanning out to the same old row.
+    for event_id, theme in inserted:
+        if not theme:
+            continue
+        await conn.execute(
+            """
+            WITH candidate AS (
+                SELECT me.id FROM app.mistake_event me
+                WHERE me.user_id = $1 AND me.tactical_theme = $2 AND me.game_id <> $3
+                  AND NOT EXISTS (SELECT 1 FROM app.mistake_event later WHERE later.recurred_event_id = me.id)
+                ORDER BY me.id DESC LIMIT 1
+            )
+            UPDATE app.mistake_event SET recurred_event_id = candidate.id
+            FROM candidate WHERE app.mistake_event.id = $4
+            """,
+            user_id, theme, game_id, event_id,
+        )
+    return inserted
+
 class SaveGameRequest(BaseModel):
     pgn: str
     white: Optional[str] = None
@@ -555,33 +675,46 @@ async def save_analyzed_game(req: SaveGameRequest, user: CurrentUser = Depends(g
     pgn_hash = hashlib.md5(req.pgn.encode()).hexdigest()
     pool = await get_pool()
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            INSERT INTO app.analyzed_game
-                (user_id, pgn_hash, pgn, white, black, game_date, result, event, player_color,
-                 opening_name, opening_eco, estimated_elo, accuracy_white, accuracy_black, payload, updated_at)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb, now())
-            ON CONFLICT (user_id, pgn_hash) DO UPDATE SET
-                white          = EXCLUDED.white,
-                black          = EXCLUDED.black,
-                game_date      = EXCLUDED.game_date,
-                result         = EXCLUDED.result,
-                event          = EXCLUDED.event,
-                player_color   = EXCLUDED.player_color,
-                opening_name   = EXCLUDED.opening_name,
-                opening_eco    = EXCLUDED.opening_eco,
-                estimated_elo  = EXCLUDED.estimated_elo,
-                accuracy_white = EXCLUDED.accuracy_white,
-                accuracy_black = EXCLUDED.accuracy_black,
-                payload        = EXCLUDED.payload,
-                updated_at     = now()
-            RETURNING id
-            """,
-            user.user_id, pgn_hash, req.pgn, req.white, req.black, req.game_date, req.result,
-            req.event, req.player_color, req.opening_name, req.opening_eco, req.estimated_elo,
-            req.accuracy_white, req.accuracy_black, json.dumps(req.payload),
-        )
-    return {"ok": True, "id": row["id"]}
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                INSERT INTO app.analyzed_game
+                    (user_id, pgn_hash, pgn, white, black, game_date, result, event, player_color,
+                     opening_name, opening_eco, estimated_elo, accuracy_white, accuracy_black, payload, updated_at)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb, now())
+                ON CONFLICT (user_id, pgn_hash) DO UPDATE SET
+                    white          = EXCLUDED.white,
+                    black          = EXCLUDED.black,
+                    game_date      = EXCLUDED.game_date,
+                    result         = EXCLUDED.result,
+                    event          = EXCLUDED.event,
+                    player_color   = EXCLUDED.player_color,
+                    opening_name   = EXCLUDED.opening_name,
+                    opening_eco    = EXCLUDED.opening_eco,
+                    estimated_elo  = EXCLUDED.estimated_elo,
+                    accuracy_white = EXCLUDED.accuracy_white,
+                    accuracy_black = EXCLUDED.accuracy_black,
+                    payload        = EXCLUDED.payload,
+                    updated_at     = now()
+                RETURNING id
+                """,
+                user.user_id, pgn_hash, req.pgn, req.white, req.black, req.game_date, req.result,
+                req.event, req.player_color, req.opening_name, req.opening_eco, req.estimated_elo,
+                req.accuracy_white, req.accuracy_black, json.dumps(req.payload),
+            )
+            game_id = row["id"]
+            new_events = await _persist_mistake_events(
+                conn, user.user_id, game_id, req.player_color, req.estimated_elo,
+                req.payload.get("moves_data") or [], req.payload.get("positions") or [],
+            )
+
+    if new_events:
+        try:
+            mistake_jobs.enqueue_classify_cognitive_errors(game_id)
+        except Exception:
+            logger.warning("Failed to enqueue cognitive-error job for game %s", game_id, exc_info=True)
+
+    return {"ok": True, "id": game_id}
 
 
 @router.get("/games")
@@ -888,8 +1021,9 @@ async def get_dashboard_summary(user: CurrentUser = Depends(get_current_user)):
         )
         top_theme = await conn.fetchrow(
             """
-            SELECT theme, SUM(cp_loss) AS total_cp_loss FROM app.mistake_pattern
-            WHERE user_id = $1 GROUP BY theme ORDER BY SUM(cp_loss) DESC LIMIT 1
+            SELECT tactical_theme AS theme, SUM(cp_loss) AS total_cp_loss FROM app.mistake_event
+            WHERE user_id = $1 AND tactical_theme IS NOT NULL
+            GROUP BY tactical_theme ORDER BY SUM(cp_loss) DESC LIMIT 1
             """,
             user.user_id,
         )

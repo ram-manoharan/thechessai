@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import analysis, imports, profile, user, scoresheet, replay
+from routers import analysis, imports, profile, user, scoresheet, replay, stats
 import db as db_module
 import engine_pool
 import human_engine_pool
@@ -59,6 +59,7 @@ app.include_router(profile.router,    prefix="/api/profile",    tags=["profile"]
 app.include_router(user.router,       prefix="/api/user",       tags=["user"])
 app.include_router(scoresheet.router, prefix="/api/scoresheet", tags=["scoresheet"])
 app.include_router(replay.router,     prefix="/api/replay",     tags=["replay"])
+app.include_router(stats.router,      prefix="/api/stats",      tags=["stats"])
 
 @app.get("/api/health")
 def health():
