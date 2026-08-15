@@ -54,15 +54,15 @@ export function ClockChart() {
 
   return (
     <div className="card animate-fade-in" style={{ padding: "14px 16px" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", rowGap: 6 }}>
         <span style={{ color: "var(--text-muted)", fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" }}>
           Time Management
         </span>
-        <div style={{ display: "flex", gap: 12, fontSize: 10 }}>
-          <span style={{ color: "var(--gold)" }}>─ You</span>
-          <span style={{ color: "var(--text-muted)" }}>─ Opponent</span>
+        <div style={{ display: "flex", gap: 12, fontSize: 10, flexWrap: "wrap", rowGap: 4 }}>
+          <span style={{ color: "var(--gold)", whiteSpace: "nowrap" }}>─ You</span>
+          <span style={{ color: "var(--text-muted)", whiteSpace: "nowrap" }}>─ Opponent</span>
           {cursorPlayer && (
-            <span style={{ color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>
+            <span style={{ color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
               {fmtTime(cursorPlayer.clock)}
             </span>
           )}

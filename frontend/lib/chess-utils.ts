@@ -1,5 +1,17 @@
 import type { MoveData } from "./api";
 
+// ── Pawn promotion ──────────────────────────────────────────────────────────
+
+export const PROMOTION_PIECES = ["q", "r", "b", "n"] as const;
+export type PromotionPiece = (typeof PROMOTION_PIECES)[number];
+export const PROMOTION_GLYPH: Record<"w" | "b", Record<PromotionPiece, string>> = {
+  w: { q: "♕", r: "♖", b: "♗", n: "♘" },
+  b: { q: "♛", r: "♜", b: "♝", n: "♞" },
+};
+export const PROMOTION_LABEL: Record<PromotionPiece, string> = {
+  q: "Queen", r: "Rook", b: "Bishop", n: "Knight",
+};
+
 // ── Move quality config ────────────────────────────────────────────────────
 
 export const CLF_CONFIG: Record<string, { badge: string; color: string; label: string }> = {

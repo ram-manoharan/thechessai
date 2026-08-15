@@ -2,11 +2,11 @@
 import { useState, useRef, useCallback, useMemo, useEffect, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
-import { Chess } from "chess.js";
+import { Chess, type Square } from "chess.js";
 import type { PieceDropHandlerArgs } from "react-chessboard";
 import { useGameStore } from "@/lib/store";
 import { replayMove } from "@/lib/api";
-import { computeOpponentFingerprint, estimatePhase } from "@/lib/chess-utils";
+import { computeOpponentFingerprint, estimatePhase, PROMOTION_PIECES, PROMOTION_GLYPH, PROMOTION_LABEL, type PromotionPiece } from "@/lib/chess-utils";
 import { playSound, sanToSound } from "@/lib/sounds";
 
 const Chessboard = dynamic(
@@ -16,6 +16,7 @@ const Chessboard = dynamic(
 
 type ReplayStatus = "your-move" | "thinking" | "checkmate" | "stalemate" | "draw" | "error";
 type HistoryEntry = { san: string; fen: string; evalCp: number | null; byUser: boolean };
+type PendingPromotion = { from: Square; to: Square; color: "w" | "b" };
 
 export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: () => void }) {
   const positions    = useGameStore(s => s.positions);
@@ -60,6 +61,7 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
   const [viewIndex,   setViewIndex]   = useState(-1); // -1 = startFen, else history[viewIndex]
   const [lastSource,  setLastSource]  = useState<"maia" | "fingerprint_deviation" | null>(null);
   const [lastBand,    setLastBand]    = useState<number | null>(null);
+  const [pendingPromotion, setPendingPromotion] = useState<PendingPromotion | null>(null);
 
   // Invalidates any in-flight opponent-reply request on reset, so a slow
   // response arriving after the user hits "Start over" can't clobber the
@@ -75,6 +77,7 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
     setError("");
     setLastSource(null);
     setLastBand(null);
+    setPendingPromotion(null);
   }, [startFen]);
 
   // Lock page scroll while the modal is open — the board sits in a portal
@@ -130,10 +133,13 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
     });
   }, [opponentRating, fingerprint, hasFingerprint, soundEnabled]);
 
-  const onPieceDrop = useCallback(({ sourceSquare: from, targetSquare: to }: PieceDropHandlerArgs) => {
-    if (!chessRef.current || !to || status !== "your-move" || !isViewingLive) return false;
+  // Shared by direct (non-promotion) drops and by the promotion picker once
+  // the user has chosen a piece -- a promotion move can't be committed to
+  // the board until we know which piece it's promoting to.
+  const commitUserMove = useCallback((from: Square, to: Square, promotion?: PromotionPiece) => {
+    if (!chessRef.current) return false;
     try {
-      const move = chessRef.current.move({ from, to, promotion: "q" });
+      const move = chessRef.current.move({ from, to, promotion });
       if (!move) return false;
       const newFen = chessRef.current.fen();
       setHistory(h => {
@@ -151,7 +157,24 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
       }
       return true;
     } catch { return false; }
-  }, [status, isViewingLive, soundEnabled, requestOpponentReply]);
+  }, [soundEnabled, requestOpponentReply]);
+
+  const onPieceDrop = useCallback(({ sourceSquare: from, targetSquare: to }: PieceDropHandlerArgs) => {
+    if (!chessRef.current || !to || status !== "your-move" || !isViewingLive) return false;
+    const fromSq = from as Square;
+    const toSq   = to as Square;
+    const piece  = chessRef.current.get(fromSq);
+    if (piece?.type === "p" && (toSq[1] === "8" || toSq[1] === "1")) {
+      // Only pop the picker for an actually-legal promotion (not just any
+      // pawn dragged onto the back rank) -- an illegal drop should still
+      // just bounce back like any other illegal move.
+      const legal = chessRef.current.moves({ square: fromSq, verbose: true });
+      if (!legal.some(m => m.to === toSq && m.promotion)) return false;
+      setPendingPromotion({ from: fromSq, to: toSq, color: piece.color });
+      return false; // reject the raw drop; the piece snaps back until a promotion piece is chosen
+    }
+    return commitUserMove(fromSq, toSq);
+  }, [status, isViewingLive, commitUserMove]);
 
   if (!startFen) return null;
 
@@ -245,7 +268,7 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
 
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-5 items-start">
           {/* Board */}
-          <div>
+          <div style={{ position: "relative" }}>
             <Chessboard options={{
               position: displayFen,
               boardOrientation: userColorWord.toLowerCase() as "white" | "black",
@@ -253,6 +276,54 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
               onPieceDrop,
               boardStyle: { borderRadius: "var(--board-radius)", boxShadow: "var(--shadow-lg)" },
             }} />
+
+            {pendingPromotion && (
+              <div
+                style={{
+                  position: "absolute", inset: 0, zIndex: 5,
+                  background: "rgba(0,0,0,0.55)", borderRadius: "var(--board-radius)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+                onClick={() => setPendingPromotion(null)}
+              >
+                <div
+                  onClick={e => e.stopPropagation()}
+                  className="card"
+                  style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }}
+                >
+                  <p style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", margin: 0 }}>
+                    Promote to
+                  </p>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {PROMOTION_PIECES.map(p => (
+                      <button
+                        key={p}
+                        title={PROMOTION_LABEL[p]}
+                        onClick={() => {
+                          const { from, to } = pendingPromotion;
+                          setPendingPromotion(null);
+                          commitUserMove(from, to, p);
+                        }}
+                        style={{
+                          width: 46, height: 46, fontSize: 26, borderRadius: 8, cursor: "pointer",
+                          background: "var(--bg-elevated)", border: "1px solid var(--border)",
+                          color: "var(--text-primary)",
+                        }}
+                        className="hover:opacity-80 transition-opacity"
+                      >
+                        {PROMOTION_GLYPH[pendingPromotion.color][p]}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => setPendingPromotion(null)}
+                    style={{ fontSize: 11, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Replay move navigation — steps through THIS session's own
                 moves, separate from the real game's move list. */}

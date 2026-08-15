@@ -81,16 +81,16 @@ export function EvalGraph() {
 
   return (
     <div className="card animate-fade-in" style={{ padding: "14px 16px" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", rowGap: 6 }}>
         <span style={{ color: "var(--text-muted)", fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" }}>
           Evaluation
         </span>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ color: "var(--clr-brilliant)", fontSize: 10 }}>!! Brilliant</span>
-          <span style={{ color: "var(--clr-blunder)",  fontSize: 10 }}>?? Blunder</span>
-          <span style={{ color: "var(--clr-mistake)",  fontSize: 10 }}>? Mistake</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", rowGap: 4 }}>
+          <span style={{ color: "var(--clr-brilliant)", fontSize: 10, whiteSpace: "nowrap" }}>!! Brilliant</span>
+          <span style={{ color: "var(--clr-blunder)",  fontSize: 10, whiteSpace: "nowrap" }}>?? Blunder</span>
+          <span style={{ color: "var(--clr-mistake)",  fontSize: 10, whiteSpace: "nowrap" }}>? Mistake</span>
           {evalText && (
-            <span style={{ color: "var(--text-secondary)", fontSize: 11, fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums" }}>
+            <span style={{ color: "var(--text-secondary)", fontSize: 11, fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
               {evalText}
             </span>
           )}

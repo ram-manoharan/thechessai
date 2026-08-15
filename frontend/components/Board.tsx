@@ -1,9 +1,10 @@
 "use client";
 import dynamic from "next/dynamic";
 import { useRef, useState, useCallback, useMemo } from "react";
-import { Chess } from "chess.js";
+import { Chess, type Square } from "chess.js";
 import type { PieceDropHandlerArgs } from "react-chessboard";
 import { useGameStore } from "@/lib/store";
+import { PROMOTION_PIECES, PROMOTION_GLYPH, PROMOTION_LABEL, type PromotionPiece } from "@/lib/chess-utils";
 
 const Chessboard = dynamic(
   () => import("react-chessboard").then(m => m.Chessboard),
@@ -46,6 +47,7 @@ export function Board() {
   const chessRef = useRef<Chess | null>(null);
   const [exploreFen, setExploreFen] = useState<string>("");
   const [copied, setCopied] = useState(false);
+  const [pendingPromotion, setPendingPromotion] = useState<{ from: Square; to: Square; color: "w" | "b" } | null>(null);
 
   // Compute last-move square highlights
   const lastMoveSquares = useMemo<Record<string, React.CSSProperties>>(() => {
@@ -74,25 +76,36 @@ export function Board() {
     chessRef.current = null;
     setExploreFen("");
     setExploreMode(false);
+    setPendingPromotion(null);
   }, [setExploreMode]);
+
+  const commitExploreMove = useCallback((from: Square, to: Square, promotion?: PromotionPiece) => {
+    if (!chessRef.current) return false;
+    try {
+      const result = chessRef.current.move({ from, to, promotion });
+      if (!result) return false;
+      setExploreFen(chessRef.current.fen());
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
 
   const onPieceDrop = useCallback(
     ({ sourceSquare, targetSquare }: PieceDropHandlerArgs) => {
       if (!chessRef.current || !targetSquare) return false;
-      try {
-        const result = chessRef.current.move({
-          from: sourceSquare,
-          to: targetSquare,
-          promotion: "q",
-        });
-        if (!result) return false;
-        setExploreFen(chessRef.current.fen());
-        return true;
-      } catch {
-        return false;
+      const from = sourceSquare as Square;
+      const to   = targetSquare as Square;
+      const piece = chessRef.current.get(from);
+      if (piece?.type === "p" && (to[1] === "8" || to[1] === "1")) {
+        const legal = chessRef.current.moves({ square: from, verbose: true });
+        if (!legal.some(m => m.to === to && m.promotion)) return false;
+        setPendingPromotion({ from, to, color: piece.color });
+        return false; // reject the raw drop; the piece snaps back until a promotion piece is chosen
       }
+      return commitExploreMove(from, to);
     },
-    []
+    [commitExploreMove]
   );
 
   const copyFen = useCallback(() => {
@@ -154,20 +167,70 @@ export function Board() {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
+            flexWrap: "wrap",
+            rowGap: 6,
           }}
         >
           <span>◈ Try a move — play freely from this position</span>
           <button
             onClick={exitExplore}
-            style={{ color: "var(--gold)", fontWeight: 600, fontSize: 11 }}
+            style={{ color: "var(--gold)", fontWeight: 600, fontSize: 11, whiteSpace: "nowrap" }}
           >
             ← Back to analysis
           </button>
         </div>
       )}
 
-      <div style={{ width: "100%", aspectRatio: "1 / 1" }}>
+      <div style={{ width: "100%", aspectRatio: "1 / 1", position: "relative" }}>
         <Chessboard options={boardOptions} />
+
+        {pendingPromotion && (
+          <div
+            style={{
+              position: "absolute", inset: 0, zIndex: 5,
+              background: "rgba(0,0,0,0.55)", borderRadius: "var(--board-radius)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}
+            onClick={() => setPendingPromotion(null)}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              className="card"
+              style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }}
+            >
+              <p style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", margin: 0 }}>
+                Promote to
+              </p>
+              <div style={{ display: "flex", gap: 8 }}>
+                {PROMOTION_PIECES.map(p => (
+                  <button
+                    key={p}
+                    title={PROMOTION_LABEL[p]}
+                    onClick={() => {
+                      const { from, to } = pendingPromotion;
+                      setPendingPromotion(null);
+                      commitExploreMove(from, to, p);
+                    }}
+                    style={{
+                      width: 46, height: 46, fontSize: 26, borderRadius: 8, cursor: "pointer",
+                      background: "var(--bg-elevated)", border: "1px solid var(--border)",
+                      color: "var(--text-primary)",
+                    }}
+                    className="hover:opacity-80 transition-opacity"
+                  >
+                    {PROMOTION_GLYPH[pendingPromotion.color][p]}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => setPendingPromotion(null)}
+                style={{ fontSize: 11, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Board controls */}

@@ -722,9 +722,9 @@ export function AIReport({ onClose }: { onClose: () => void }) {
                 <>
                   {data.key_moments.length > 0 && (
                     <section>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", rowGap: 4 }}>
                         <SectionHead icon="✦" title="Game Timeline" />
-                        <span style={{ color: "var(--text-muted)", fontSize: 10, fontVariantNumeric: "tabular-nums" }}>{data.key_moments.length} moments reviewed</span>
+                        <span style={{ color: "var(--text-muted)", fontSize: 10, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{data.key_moments.length} moments reviewed</span>
                       </div>
                       <TimelineStrip moments={data.key_moments} onSelect={i => setFilmIdx(i)} />
                     </section>
@@ -828,9 +828,9 @@ export function AIReport({ onClose }: { onClose: () => void }) {
 
                   {/* Study calendar */}
                   <section>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", rowGap: 6 }}>
                       <SectionHead icon="⟶" title="Weekly Study Plan" />
-                      <span style={{ background: "rgba(91,142,245,0.1)", color: "var(--accent-blue)", border: "1px solid rgba(91,142,245,0.2)", fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 4 }}>Priority: {data.study_plan.priority_phase}</span>
+                      <span style={{ background: "rgba(91,142,245,0.1)", color: "var(--accent-blue)", border: "1px solid rgba(91,142,245,0.2)", fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 4, whiteSpace: "nowrap" }}>Priority: {data.study_plan.priority_phase}</span>
                     </div>
                     <StudyCalendar items={data.study_plan.items} routine={data.study_plan.daily_routine} />
                   </section>
