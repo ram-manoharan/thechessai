@@ -7,6 +7,7 @@ import { useSession } from "next-auth/react";
 import { Chess } from "chess.js";
 import type { PieceDropHandlerArgs } from "react-chessboard";
 import { Navbar } from "@/components/Navbar";
+import { useCurrentTheme } from "@/lib/theme";
 import {
   fetchLichessGames, fetchChessdotcomGames, fetchLichessRatingHistory,
   streamProfile, getMe, linkChessUsername, saveProfile, getSavedProfile,
@@ -33,20 +34,29 @@ const STAGGER = ["0s","0.06s","0.12s","0.18s","0.24s","0.30s","0.36s","0.42s"];
 
 // ── Style fingerprint ─────────────────────────────────────────────────────────
 
-function deriveStyleTag(s: ProfileStats): { tag: string; sub: string; color: string; icon: string } {
+function deriveStyleTag(s: ProfileStats): { tag: string; sub: string; color: string; bg: string; border: string; icon: string } {
   if (s.precision_rate > 65 && s.avg_cp_loss < 25)
-    return { tag: "Precision Machine",    sub: "Consistently clean, low error rate across all phases",       color: "var(--clr-best)",      icon: "◎" };
+    return { tag: "Precision Machine",    sub: "Consistently clean, low error rate across all phases",       color: "var(--clr-best)",    bg: "var(--tint-green)", border: "var(--border-green)", icon: "◎" };
   if (s.winning_error_rate > 25)
-    return { tag: "Clutch Challenger",    sub: "Strong play that breaks down converting winning positions",   color: "var(--clr-mistake)",   icon: "△" };
+    return { tag: "Clutch Challenger",    sub: "Strong play that breaks down converting winning positions",   color: "var(--clr-mistake)", bg: "var(--tint-gold)",  border: "var(--border-gold)",  icon: "△" };
   if (s.weakest_phase.includes("Endgame"))
-    return { tag: "Opening Specialist",   sub: "Sharp preparation, endgame technique needs focused study",   color: "var(--gold)",          icon: "◈" };
+    return { tag: "Opening Specialist",   sub: "Sharp preparation, endgame technique needs focused study",   color: "var(--gold)",        bg: "var(--tint-gold)",  border: "var(--border-gold)",  icon: "◈" };
   if (s.weakest_phase.includes("Opening"))
-    return { tag: "Endgame Grinder",      sub: "Long-game technique is a strength, opening prep to build",  color: "var(--accent-blue)",   icon: "◉" };
+    return { tag: "Endgame Grinder",      sub: "Long-game technique is a strength, opening prep to build",  color: "var(--accent-blue)", bg: "var(--tint-blue)",  border: "var(--border-blue)",  icon: "◉" };
   if ((s.white_score_pct ?? 0) > (s.black_score_pct ?? 0) + 12)
-    return { tag: "White Specialist",     sub: "Dominant with initiative, inconsistent with Black",          color: "var(--gold)",          icon: "◆" };
+    return { tag: "White Specialist",     sub: "Dominant with initiative, inconsistent with Black",          color: "var(--gold)",        bg: "var(--tint-gold)",  border: "var(--border-gold)",  icon: "◆" };
   if (s.win_rate > 55)
-    return { tag: "Solid Performer",      sub: "Consistent and reliable across openings and time controls",  color: "var(--clr-best)",      icon: "✓" };
-  return   { tag: "Developing Tactician", sub: "Building pattern recognition, calculation and endgame skills", color: "var(--accent-blue)", icon: "✦" };
+    return { tag: "Solid Performer",      sub: "Consistent and reliable across openings and time controls",  color: "var(--clr-best)",   bg: "var(--tint-green)", border: "var(--border-green)", icon: "✓" };
+  return   { tag: "Developing Tactician", sub: "Building pattern recognition, calculation and endgame skills", color: "var(--accent-blue)", bg: "var(--tint-blue)", border: "var(--border-blue)",  icon: "✦" };
+}
+
+// ── Shared 4-tier score coloring (Exceptional/Excellent/Needs Work/Urgent) ─────
+
+function tierColor(score: number): { label: string; color: string; bg: string; border: string } {
+  if (score >= 80) return { label: "Exceptional", color: "var(--clr-best)",    bg: "var(--tint-green)", border: "var(--border-green)" };
+  if (score >= 60) return { label: "Excellent",    color: "var(--accent-blue)", bg: "var(--tint-blue)",  border: "var(--border-blue)" };
+  if (score >= 40) return { label: "Needs Work",   color: "var(--accent-amber)", bg: "var(--tint-gold)", border: "var(--border-gold)" };
+  return            { label: "Urgent",             color: "var(--clr-blunder)", bg: "var(--tint-red)",   border: "var(--border-red)" };
 }
 
 // ── Performance Radar ─────────────────────────────────────────────────────────
@@ -121,8 +131,8 @@ function SectionBanner({ icon, title, desc, iconColor }: {
   icon: string; title: string; desc: string; iconColor: string;
 }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 18px", background: `${iconColor}0d`, border: `1px solid ${iconColor}28`, borderRadius: 14 }}>
-      <div style={{ width: 40, height: 40, borderRadius: 12, background: `${iconColor}18`, border: `1px solid ${iconColor}35`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0, color: iconColor }}>{icon}</div>
+    <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 18px", background: `color-mix(in srgb, ${iconColor} 5%, transparent)`, border: `1px solid color-mix(in srgb, ${iconColor} 16%, transparent)`, borderRadius: 14 }}>
+      <div style={{ width: 40, height: 40, borderRadius: 12, background: `color-mix(in srgb, ${iconColor} 9%, transparent)`, border: `1px solid color-mix(in srgb, ${iconColor} 21%, transparent)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0, color: iconColor }}>{icon}</div>
       <div>
         <div style={{ fontSize: 16, fontWeight: 800, color: "var(--text-primary)", lineHeight: 1.2 }}>{title}</div>
         <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 3, lineHeight: 1.4 }}>{desc}</div>
@@ -160,12 +170,20 @@ function SidebarScoreRing({ value, color }: { value: number; color: string }) {
 
 function RadarChart8D({ axes }: { axes: { label: string; score: number }[] }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  const tierCol = (s: number) => s >= 80 ? "#4ade80" : s >= 60 ? "#5b8ef5" : s >= 40 ? "#f59e0b" : "#ef4444";
+  const theme = useCurrentTheme();
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const dark = theme !== "light";
+    const tierCol = (s: number) => s >= 80 ? (dark ? "#4ade80" : "#0c6e2c") : s >= 60 ? (dark ? "#5b8ef5" : "#2563eb") : s >= 40 ? (dark ? "#f59e0b" : "#9c4a0a") : (dark ? "#ef4444" : "#b41e1e");
+    const gridStrong = dark ? "rgba(255,255,255,0.1)"  : "rgba(0,0,0,0.14)";
+    const gridWeak   = dark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.07)";
+    const ringLabel  = dark ? "rgba(255,255,255,0.22)" : "rgba(0,0,0,0.32)";
+    const spokeCol   = dark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.09)";
+    const dotStroke  = dark ? "#0C1009" : "#faf7f1";
+    const labelCol   = dark ? "rgba(220,230,218,0.7)" : "rgba(26,20,16,0.72)";
+
     const dpr = window.devicePixelRatio || 1;
     const size = 248;
     canvas.width  = size * dpr;
@@ -191,12 +209,12 @@ function RadarChart8D({ axes }: { axes: { label: string; score: number }[] }) {
         i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
       }
       ctx.closePath();
-      ctx.strokeStyle = f === 1 ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.05)";
+      ctx.strokeStyle = f === 1 ? gridStrong : gridWeak;
       ctx.lineWidth = f === 1 ? 1 : 0.7;
       ctx.stroke();
       if (f === 0.5 || f === 0.75) {
         const { x, y } = pt(0, R * f);
-        ctx.fillStyle = "rgba(255,255,255,0.22)";
+        ctx.fillStyle = ringLabel;
         ctx.font = "500 7px system-ui";
         ctx.textAlign = "left";
         ctx.fillText(`${f * 100 | 0}`, x + 3, y - 2);
@@ -207,7 +225,7 @@ function RadarChart8D({ axes }: { axes: { label: string; score: number }[] }) {
     for (let i = 0; i < n; i++) {
       const end = pt(i, R);
       ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(end.x, end.y);
-      ctx.strokeStyle = "rgba(255,255,255,0.07)"; ctx.lineWidth = 1; ctx.stroke();
+      ctx.strokeStyle = spokeCol; ctx.lineWidth = 1; ctx.stroke();
     }
 
     // Player polygon fill
@@ -226,7 +244,7 @@ function RadarChart8D({ axes }: { axes: { label: string; score: number }[] }) {
       ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
       ctx.fillStyle = tierCol(axes[i].score);
       ctx.fill();
-      ctx.strokeStyle = "#0C1009"; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.strokeStyle = dotStroke; ctx.lineWidth = 1.5; ctx.stroke();
     });
 
     // Labels
@@ -234,13 +252,13 @@ function RadarChart8D({ axes }: { axes: { label: string; score: number }[] }) {
     for (let i = 0; i < n; i++) {
       const { x, y } = pt(i, R + 22);
       const lines = axes[i].label.split("\n");
-      ctx.fillStyle = "rgba(220,230,218,0.7)";
+      ctx.fillStyle = labelCol;
       ctx.font = "600 8px system-ui";
       lines.forEach((line, li) => {
         ctx.fillText(line, x, y + (li - (lines.length - 1) / 2) * 11);
       });
     }
-  }, [axes.map(a => a.score).join(",")]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [axes.map(a => a.score).join(","), theme]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div style={{ display: "flex", justifyContent: "center" }}>
@@ -609,7 +627,7 @@ function StyleDNA({ stats, styleTag, styleQuote }: {
         </div>
         <p style={{ color: styleTag.color, fontSize: 22, fontWeight: 900, lineHeight: 1.1, marginBottom: 6 }}>{styleTag.tag}</p>
         {styleQuote ? (
-          <p style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.5, marginBottom: 14, fontStyle: "italic", borderLeft: `2px solid ${styleTag.color}50`, paddingLeft: 10 }}>
+          <p style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.5, marginBottom: 14, fontStyle: "italic", borderLeft: `2px solid ${styleTag.border}`, paddingLeft: 10 }}>
             &ldquo;{styleQuote}.&rdquo;
           </p>
         ) : (
@@ -635,7 +653,7 @@ function PriorityCard({ rank, title, sub, metric, metricLabel, quote, color, acc
   }[rank];
 
   return (
-    <div style={{ background: accent, border: `1px solid ${color}28`, borderRadius: 14, padding: "16px 16px 14px", display: "flex", flexDirection: "column", gap: 10, animation: `fade-slide-up 0.35s ease ${STAGGER[idx]} both` }}>
+    <div style={{ background: accent, border: `1px solid color-mix(in srgb, ${color} 16%, transparent)`, borderRadius: 14, padding: "16px 16px 14px", display: "flex", flexDirection: "column", gap: 10, animation: `fade-slide-up 0.35s ease ${STAGGER[idx]} both` }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <span style={{ fontSize: 18, color }}>{icon}</span>
         <span style={{ fontSize: 12, fontWeight: 800, color: rankConfig.badgeColor, background: rankConfig.badgeBg, border: `1px solid ${rankConfig.badgeBorder}`, padding: "2px 7px", borderRadius: 4, letterSpacing: "0.1em" }}>{rankConfig.badge}</span>
@@ -649,7 +667,7 @@ function PriorityCard({ rank, title, sub, metric, metricLabel, quote, color, acc
         <span style={{ color: "var(--text-muted)", fontSize: 12 }}>{metricLabel}</span>
       </div>
       {quote && (
-        <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.5, borderTop: `1px solid ${color}18`, paddingTop: 10, fontStyle: "italic" }}>
+        <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.5, borderTop: `1px solid color-mix(in srgb, ${color} 9%, transparent)`, paddingTop: 10, fontStyle: "italic" }}>
           &ldquo;{quote}&rdquo;
         </p>
       )}
@@ -731,7 +749,7 @@ function WeeklyGrid({ bullets, weakestPhase }: { bullets: string[]; weakestPhase
               key={day}
               style={{
                 borderRadius: 12,
-                border: `1px solid ${act.color}28`,
+                border: `1px solid color-mix(in srgb, ${act.color} 16%, transparent)`,
                 borderLeft: `3px solid ${act.color}`,
                 background: isRest ? "var(--tint-subtle)" : act.accent,
                 padding: "11px 12px",
@@ -771,7 +789,7 @@ function InsightBullet({ text, icon = "▸", color = "var(--accent-blue)", accen
   text: string; icon?: string; color?: string; accent?: string; idx?: number;
 }) {
   return (
-    <div style={{ background: accent, border: `1px solid ${color}22`, borderRadius: 9, padding: "9px 12px", display: "flex", gap: 8, alignItems: "flex-start", animation: `fade-slide-up 0.25s ease ${idx * 0.05}s both` }}>
+    <div style={{ background: accent, border: `1px solid color-mix(in srgb, ${color} 13%, transparent)`, borderRadius: 9, padding: "9px 12px", display: "flex", gap: 8, alignItems: "flex-start", animation: `fade-slide-up 0.25s ease ${idx * 0.05}s both` }}>
       <span style={{ color, fontSize: 12, flexShrink: 0, marginTop: 2, fontWeight: 700 }}>{icon}</span>
       <span style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.65 }}>{renderBold(text)}</span>
     </div>
@@ -786,11 +804,11 @@ function CoachBlock({ icon, title, badge, badgeColor = "var(--gold)", borderColo
 }) {
   return (
     <div style={{ background: "var(--bg-surface)", border: `1px solid ${borderColor}`, borderRadius: 16, overflow: "hidden", animation: `fade-slide-up 0.3s ease ${delay} both` }}>
-      <div style={{ background: `${borderColor.replace("rgba(", "rgba(").replace(/,[^,]+\)$/, ",0.04)")}`, borderBottom: `1px solid ${borderColor}`, padding: "13px 18px", display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ background: `color-mix(in srgb, ${borderColor} 4%, transparent)`, borderBottom: `1px solid ${borderColor}`, padding: "13px 18px", display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ color: badgeColor, fontSize: 13 }}>{icon}</span>
         <span style={{ color: "var(--text-primary)", fontWeight: 800, fontSize: 13 }}>{title}</span>
         {badge && (
-          <span style={{ marginLeft: "auto", background: `${badgeColor}18`, color: badgeColor, border: `1px solid ${badgeColor}30`, fontSize: 13, fontWeight: 800, padding: "2px 8px", borderRadius: 4, letterSpacing: "0.1em" }}>{badge}</span>
+          <span style={{ marginLeft: "auto", background: `color-mix(in srgb, ${badgeColor} 9%, transparent)`, color: badgeColor, border: `1px solid color-mix(in srgb, ${badgeColor} 19%, transparent)`, fontSize: 13, fontWeight: 800, padding: "2px 8px", borderRadius: 4, letterSpacing: "0.1em" }}>{badge}</span>
         )}
       </div>
       <div style={{ padding: "16px 18px" }}>
@@ -804,7 +822,7 @@ function CoachBlock({ icon, title, badge, badgeColor = "var(--gold)", borderColo
 
 function BodyInsight({ text, color }: { text: string; color: string }) {
   return (
-    <div style={{ borderLeft: `3px solid ${color}50`, background: `${color}06`, borderRadius: "0 8px 8px 0", padding: "10px 14px", marginBottom: 10 }}>
+    <div style={{ borderLeft: `3px solid color-mix(in srgb, ${color} 31%, transparent)`, background: `color-mix(in srgb, ${color} 2%, transparent)`, borderRadius: "0 8px 8px 0", padding: "10px 14px", marginBottom: 10 }}>
       <p style={{ color: "var(--text-secondary)", fontSize: 12, lineHeight: 1.75 }}>{renderBold(text)}</p>
     </div>
   );
@@ -818,7 +836,7 @@ function SubSection({ sub, color, icon }: { sub: { title: string; bullets: strin
       {sub.body.map((b, j) => <BodyInsight key={j} text={b} color={color} />)}
       {sub.bullets.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: sub.body.length ? 6 : 0 }}>
-          {sub.bullets.map((b, j) => <InsightBullet key={j} idx={j} text={b} icon={icon} color={color} accent={color + "09"} />)}
+          {sub.bullets.map((b, j) => <InsightBullet key={j} idx={j} text={b} icon={icon} color={color} accent={`color-mix(in srgb, ${color} 4%, transparent)`} />)}
         </div>
       )}
     </div>
@@ -892,7 +910,7 @@ function ConversionDashboard({ stats }: { stats: ProfileStats }) {
             const circ = 2 * Math.PI * arcR;
             const filled = circ * Math.min(g.value, 100) / 100;
             return (
-              <div key={i} style={{ background: "var(--bg-app)", border: `1px solid ${g.color}28`, borderRadius: 12, padding: "14px 12px", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+              <div key={i} style={{ background: "var(--bg-app)", border: `1px solid color-mix(in srgb, ${g.color} 16%, transparent)`, borderRadius: 12, padding: "14px 12px", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
                 <svg width="80" height="80" viewBox="0 0 80 80">
                   <circle cx="40" cy="40" r={arcR} fill="none" stroke="var(--border)" strokeWidth={6} />
                   <circle
@@ -1028,7 +1046,7 @@ function OpeningFitnessMatrix({ stats }: { stats: ProfileStats }) {
               )}
             </div>
             <div>
-              <span style={{ fontSize: 13, fontWeight: 800, padding: "3px 8px", borderRadius: 5, letterSpacing: "0.08em", color: r.verdictColor, background: `${r.verdictColor}15`, border: `1px solid ${r.verdictColor}30` }}>
+              <span style={{ fontSize: 13, fontWeight: 800, padding: "3px 8px", borderRadius: 5, letterSpacing: "0.08em", color: r.verdictColor, background: `color-mix(in srgb, ${r.verdictColor} 8%, transparent)`, border: `1px solid color-mix(in srgb, ${r.verdictColor} 19%, transparent)` }}>
                 {r.verdict === "Keep" ? "✓ Keep" : r.verdict === "Deepen" ? "↑ Deepen" : "✕ Replace"}
               </span>
             </div>
@@ -1100,7 +1118,7 @@ function WeeklyScheduleCards({ section }: { section: ReturnType<typeof matchSect
         {parsed.map((d, i) => {
           const meta = DAY_META[d.day] || DAY_META.MON;
           return (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: "56px 1fr auto", gap: 12, alignItems: "center", background: meta.accent, border: `1px solid ${meta.color}22`, borderRadius: 10, padding: "10px 12px", animation: `fade-slide-up 0.25s ease ${i * 0.04}s both` }}>
+            <div key={i} style={{ display: "grid", gridTemplateColumns: "56px 1fr auto", gap: 12, alignItems: "center", background: meta.accent, border: `1px solid color-mix(in srgb, ${meta.color} 13%, transparent)`, borderRadius: 10, padding: "10px 12px", animation: `fade-slide-up 0.25s ease ${i * 0.04}s both` }}>
               {/* Day badge */}
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
                 <span style={{ fontSize: 15, color: meta.color }}>{meta.icon}</span>
@@ -1113,7 +1131,7 @@ function WeeklyScheduleCards({ section }: { section: ReturnType<typeof matchSect
                 </div>
                 <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.5, marginBottom: d.resource ? 5 : 0 }}>{d.activity}</p>
                 {d.resource && (
-                  <span style={{ display: "inline-block", background: "var(--bg-elevated)", border: `1px solid ${meta.color}30`, borderRadius: 4, padding: "2px 7px", fontSize: 13, color: "var(--text-muted)", fontWeight: 600 }}>
+                  <span style={{ display: "inline-block", background: "var(--bg-elevated)", border: `1px solid color-mix(in srgb, ${meta.color} 19%, transparent)`, borderRadius: 4, padding: "2px 7px", fontSize: 13, color: "var(--text-muted)", fontWeight: 600 }}>
                     📚 {d.resource}
                   </span>
                 )}
@@ -1178,7 +1196,7 @@ function ResourceLibraryCards({ section }: { section: ReturnType<typeof matchSec
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
                 <span style={{ fontSize: 13, color: meta.color }}>{meta.icon}</span>
                 <span style={{ color: meta.color, fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.12em" }}>{cat.title}</span>
-                <div style={{ flex: 1, height: 1, background: `${meta.color}25`, marginLeft: 6 }} />
+                <div style={{ flex: 1, height: 1, background: `color-mix(in srgb, ${meta.color} 15%, transparent)`, marginLeft: 6 }} />
               </div>
               {/* Resource cards */}
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -1188,7 +1206,7 @@ function ResourceLibraryCards({ section }: { section: ReturnType<typeof matchSec
                   const title = m ? m[1].trim() : stripBold(item).split("—")[0].trim();
                   const why   = m ? m[2].trim() : stripBold(item).split(/—|-/).slice(1).join("—").trim();
                   return (
-                    <div key={ii} style={{ background: meta.accent, border: `1px solid ${meta.color}22`, borderRadius: 9, padding: "10px 12px", display: "flex", gap: 10, alignItems: "flex-start" }}>
+                    <div key={ii} style={{ background: meta.accent, border: `1px solid color-mix(in srgb, ${meta.color} 13%, transparent)`, borderRadius: 9, padding: "10px 12px", display: "flex", gap: 10, alignItems: "flex-start" }}>
                       <span style={{ color: meta.color, fontSize: 12, flexShrink: 0, marginTop: 2 }}>◆</span>
                       <div>
                         <p style={{ color: "var(--text-primary)", fontWeight: 700, fontSize: 12, lineHeight: 1.3, marginBottom: why ? 4 : 0 }}>{title}</p>
@@ -1292,16 +1310,16 @@ function CareerRoadmap({ section }: { section: ReturnType<typeof matchSection> }
             <div key={pi} style={{ position: "relative", paddingLeft: 28, paddingBottom: pi < phases.length - 1 ? 20 : 0 }}>
               {/* Timeline line */}
               {pi < phases.length - 1 && (
-                <div style={{ position: "absolute", left: 11, top: 28, bottom: 0, width: 2, background: `linear-gradient(to bottom, ${pmeta.color}60, ${PHASE_META[pi+1]?.color ?? "var(--border)"}30)` }} />
+                <div style={{ position: "absolute", left: 11, top: 28, bottom: 0, width: 2, background: `linear-gradient(to bottom, color-mix(in srgb, ${pmeta.color} 38%, transparent), color-mix(in srgb, ${PHASE_META[pi+1]?.color ?? "var(--border)"} 19%, transparent))` }} />
               )}
               {/* Phase dot */}
               <div style={{ position: "absolute", left: 0, top: 14, width: 22, height: 22, borderRadius: "50%", background: pmeta.accent, border: `2px solid ${pmeta.color}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <span style={{ color: pmeta.color, fontSize: 13, fontWeight: 900 }}>{pi + 1}</span>
               </div>
               {/* Phase card */}
-              <div style={{ background: pmeta.accent, border: `1px solid ${pmeta.color}28`, borderRadius: 12, overflow: "hidden" }}>
+              <div style={{ background: pmeta.accent, border: `1px solid color-mix(in srgb, ${pmeta.color} 16%, transparent)`, borderRadius: 12, overflow: "hidden" }}>
                 {/* Phase header */}
-                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: `1px solid ${pmeta.color}20` }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: `1px solid color-mix(in srgb, ${pmeta.color} 13%, transparent)` }}>
                   <span style={{ color: pmeta.color, fontWeight: 900, fontSize: 12 }}>{pmeta.label}</span>
                   <span style={{ color: "var(--text-muted)", fontSize: 12 }}>·</span>
                   <span style={{ color: "var(--text-muted)", fontSize: 12 }}>{pmeta.months}</span>
@@ -1314,7 +1332,7 @@ function CareerRoadmap({ section }: { section: ReturnType<typeof matchSection> }
                 {/* Phase body */}
                 <div style={{ padding: "10px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
                   {objective && (
-                    <div style={{ background: `${pmeta.color}12`, border: `1px solid ${pmeta.color}30`, borderRadius: 8, padding: "8px 10px", marginBottom: 4 }}>
+                    <div style={{ background: `color-mix(in srgb, ${pmeta.color} 7%, transparent)`, border: `1px solid color-mix(in srgb, ${pmeta.color} 19%, transparent)`, borderRadius: 8, padding: "8px 10px", marginBottom: 4 }}>
                       <p style={{ color: pmeta.color, fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 3 }}>Objective</p>
                       <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.55 }}>{objective.value}</p>
                     </div>
@@ -1418,7 +1436,7 @@ function OpeningSubSection({ sub, color }: { sub: { title: string; bullets: stri
           {openingEntries.map((e, ei) => {
             const evc = e.verdict ? VERDICT_CONFIG[e.verdict] : null;
             return (
-              <div key={ei} style={{ background: "var(--bg-app)", border: `1px solid ${color}20`, borderRadius: 10, padding: "10px 12px" }}>
+              <div key={ei} style={{ background: "var(--bg-app)", border: `1px solid color-mix(in srgb, ${color} 13%, transparent)`, borderRadius: 10, padding: "10px 12px" }}>
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: e.bullets.length ? 7 : 0 }}>
                   <p style={{ color: "var(--text-primary)", fontWeight: 700, fontSize: 12, lineHeight: 1.3, flex: 1 }}>
                     {renderBold(e.header.replace(/VERDICT:.*/i, "").trim())}
@@ -1440,7 +1458,7 @@ function OpeningSubSection({ sub, color }: { sub: { title: string; bullets: stri
       ) : (
         sub.bullets.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-            {sub.bullets.map((b, j) => <InsightBullet key={j} idx={j} text={b} icon="♟" color={color} accent={color + "09"} />)}
+            {sub.bullets.map((b, j) => <InsightBullet key={j} idx={j} text={b} icon="♟" color={color} accent={`color-mix(in srgb, ${color} 4%, transparent)`} />)}
           </div>
         )
       )}
@@ -1689,7 +1707,7 @@ function TechnicalDeepDiveSection({ stats, section }: { stats: ProfileStats; sec
               <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "10px 13px", borderBottom: `1px solid ${area.border}` }}>
                 <span style={{ color: area.color, fontSize: 13 }}>{area.icon}</span>
                 <span style={{ color: "var(--text-primary)", fontWeight: 800, fontSize: 13 }}>{area.label}</span>
-                <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 800, padding: "2px 7px", borderRadius: 4, letterSpacing: "0.09em", color: sevColor, background: `${sevColor}1a`, border: `1px solid ${sevColor}40` }}>
+                <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 800, padding: "2px 7px", borderRadius: 4, letterSpacing: "0.09em", color: sevColor, background: `color-mix(in srgb, ${sevColor} 10%, transparent)`, border: `1px solid color-mix(in srgb, ${sevColor} 25%, transparent)` }}>
                   {severityLabels[area.severity]}
                 </span>
               </div>
@@ -1795,7 +1813,7 @@ function ProfileCoach({ text, stats }: { text: string; stats: ProfileStats }) {
       {fingerprintS && fingerprintS.bullets.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {fingerprintS.bullets.map((b, i) => (
-            <InsightBullet key={i} idx={i} text={b} icon="◈" color={styleTag.color} accent={styleTag.color + "08"} />
+            <InsightBullet key={i} idx={i} text={b} icon="◈" color={styleTag.color} accent={styleTag.bg} />
           ))}
         </div>
       )}
@@ -1961,6 +1979,8 @@ function ErrorHeatmap({ moves }: { moves: ProfileStats["worst_moves"] }) {
 
 function StyleDNAQuadrant({ stats }: { stats: ProfileStats }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const theme = useCurrentTheme();
+  const dark = theme !== "light";
 
   const positionalX = Math.min(100, Math.max(0,
     stats.precision_rate * 0.55 + Math.max(0, 100 - Math.min(stats.avg_cp_loss, 80) * 1.1) * 0.45
@@ -1970,18 +1990,28 @@ function StyleDNAQuadrant({ stats }: { stats: ProfileStats }) {
     stats.win_rate * 1.15 - drawRatePct * 0.35 + 10
   ));
 
-  const GMs = [
-    { name: "Tal",       x: 16, y: 90, color: "#ef4444" },
-    { name: "Fischer",   x: 32, y: 82, color: "#f97316" },
-    { name: "Nakamura",  x: 38, y: 76, color: "#eab308" },
-    { name: "Carlsen",   x: 66, y: 60, color: "#4ade80" },
-    { name: "Karpov",    x: 80, y: 36, color: "#5b8ef5" },
-    { name: "Petrosian", x: 88, y: 16, color: "#8b5cf6" },
+  // GM identity colors — same hues in both themes, darkened for light-mode contrast.
+  const GM_META = [
+    { name: "Tal",       x: 16, y: 90, dark: "#ef4444", light: "#b41e1e" },
+    { name: "Fischer",   x: 32, y: 82, dark: "#f97316", light: "#a3450a" },
+    { name: "Nakamura",  x: 38, y: 76, dark: "#eab308", light: "#8a6714" },
+    { name: "Carlsen",   x: 66, y: 60, dark: "#4ade80", light: "#0c6e2c" },
+    { name: "Karpov",    x: 80, y: 36, dark: "#5b8ef5", light: "#2563eb" },
+    { name: "Petrosian", x: 88, y: 16, dark: "#8b5cf6", light: "#6d28d9" },
   ];
+  const GMs = GM_META.map(g => ({ name: g.name, x: g.x, y: g.y, color: dark ? g.dark : g.light }));
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const quadTints = dark
+      ? ["rgba(239,68,68,0.07)", "rgba(74,222,128,0.07)", "rgba(245,158,11,0.05)", "rgba(91,142,245,0.07)"]
+      : ["rgba(180,30,30,0.06)", "rgba(20,140,60,0.06)",  "rgba(138,103,20,0.05)", "rgba(37,99,235,0.06)"];
+    const gridStrong = dark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.18)";
+    const gridWeak   = dark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.08)";
+    const frameCol   = dark ? "rgba(255,255,255,0.1)"  : "rgba(0,0,0,0.14)";
+    const axisLabel  = dark ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.38)";
+
     const dpr = window.devicePixelRatio || 1;
     const W = 248, H = 248;
     canvas.width = W * dpr; canvas.height = H * dpr;
@@ -1995,23 +2025,23 @@ function StyleDNAQuadrant({ stats }: { stats: ProfileStats }) {
     const qx = pad + pw / 2, qy = pad + ph / 2;
 
     [
-      { x: pad,  y: pad,  w: pw/2, h: ph/2, col: "rgba(239,68,68,0.07)"  },
-      { x: qx,   y: pad,  w: pw/2, h: ph/2, col: "rgba(74,222,128,0.07)" },
-      { x: pad,  y: qy,   w: pw/2, h: ph/2, col: "rgba(245,158,11,0.05)" },
-      { x: qx,   y: qy,   w: pw/2, h: ph/2, col: "rgba(91,142,245,0.07)" },
+      { x: pad,  y: pad,  w: pw/2, h: ph/2, col: quadTints[0] },
+      { x: qx,   y: pad,  w: pw/2, h: ph/2, col: quadTints[1] },
+      { x: pad,  y: qy,   w: pw/2, h: ph/2, col: quadTints[2] },
+      { x: qx,   y: qy,   w: pw/2, h: ph/2, col: quadTints[3] },
     ].forEach(t => { ctx.fillStyle = t.col; ctx.fillRect(t.x, t.y, t.w, t.h); });
 
-    ctx.strokeStyle = "rgba(255,255,255,0.07)"; ctx.lineWidth = 0.5;
+    ctx.strokeStyle = gridWeak; ctx.lineWidth = 0.5;
     for (let i = 1; i < 4; i++) {
       ctx.beginPath(); ctx.moveTo(pad + pw * i/4, pad); ctx.lineTo(pad + pw * i/4, pad + ph); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(pad, pad + ph * i/4); ctx.lineTo(pad + pw, pad + ph * i/4); ctx.stroke();
     }
-    ctx.strokeStyle = "rgba(255,255,255,0.15)"; ctx.lineWidth = 1;
+    ctx.strokeStyle = gridStrong; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(qx, pad); ctx.lineTo(qx, pad + ph); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(pad, qy); ctx.lineTo(pad + pw, qy); ctx.stroke();
-    ctx.strokeStyle = "rgba(255,255,255,0.1)"; ctx.strokeRect(pad, pad, pw, ph);
+    ctx.strokeStyle = frameCol; ctx.strokeRect(pad, pad, pw, ph);
 
-    ctx.font = "700 7px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.fillStyle = "rgba(255,255,255,0.25)";
+    ctx.font = "700 7px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.fillStyle = axisLabel;
     ctx.fillText("◀ TACTICAL", pad + pw * 0.15, pad - 9);
     ctx.fillText("POSITIONAL ▶", pad + pw * 0.85, pad - 9);
     ctx.save(); ctx.translate(pad - 11, pad + ph * 0.2); ctx.rotate(-Math.PI/2);
@@ -2032,26 +2062,20 @@ function StyleDNAQuadrant({ stats }: { stats: ProfileStats }) {
     });
 
     const px = toX(positionalX), py = toY(attackingY);
+    const goldCol = dark ? "#C9A84C" : "#8a6714";
     ctx.beginPath(); ctx.arc(px, py, 13, 0, Math.PI * 2);
     ctx.fillStyle = "rgba(201,162,68,0.1)"; ctx.fill();
     ctx.strokeStyle = "rgba(201,162,68,0.3)"; ctx.lineWidth = 1; ctx.stroke();
     ctx.beginPath(); ctx.arc(px, py, 7, 0, Math.PI * 2);
     ctx.fillStyle = "rgba(201,162,68,0.25)"; ctx.fill();
-    ctx.strokeStyle = "#C9A84C"; ctx.lineWidth = 2; ctx.stroke();
-    ctx.fillStyle = "#C9A84C"; ctx.font = "900 9px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.strokeStyle = goldCol; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = goldCol; ctx.font = "900 9px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText("★", px, py);
     ctx.font = "800 8px system-ui, sans-serif"; ctx.textBaseline = "alphabetic";
     ctx.fillText("YOU", px, py - 13);
-  }, [positionalX, attackingY]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [positionalX, attackingY, dark]);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  const GMs2 = [
-    { name: "Tal",       color: "#ef4444" },
-    { name: "Fischer",   color: "#f97316" },
-    { name: "Nakamura",  color: "#eab308" },
-    { name: "Carlsen",   color: "#4ade80" },
-    { name: "Karpov",    color: "#5b8ef5" },
-    { name: "Petrosian", color: "#8b5cf6" },
-  ];
+  const GMs2 = GMs;
 
   return (
     <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
@@ -2062,7 +2086,7 @@ function StyleDNAQuadrant({ stats }: { stats: ProfileStats }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 2 }}>
           {[
             { label: "Positional score", value: Math.round(positionalX), color: "var(--gold)" },
-            { label: "Attacking score",  value: Math.round(attackingY),  color: "#ef4444" },
+            { label: "Attacking score",  value: Math.round(attackingY),  color: "var(--clr-blunder)" },
           ].map(item => (
             <div key={item.label}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
@@ -2092,12 +2116,22 @@ function StyleDNAQuadrant({ stats }: { stats: ProfileStats }) {
 
 function MoveHeatmapCanvas({ moves }: { moves: ProfileStats["worst_moves"] }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const theme = useCurrentTheme();
   const BUCKET = 5;
   const N = 11; // buckets: 0-4, 5-9, 10-14, … 50-54
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || moves.length === 0) return;
+    const dark = theme !== "light";
+    const RED    = dark ? "239,68,68"  : "180,30,30";
+    const ORANGE = dark ? "249,115,22" : "168,61,15";
+    const GREEN  = dark ? "74,222,128" : "20,140,60";
+    const BLUE   = dark ? "91,142,245" : "37,99,235";
+    const AMBER  = dark ? "245,158,11" : "138,103,20";
+    const HI_TEXT = dark ? "255,255,255" : "26,20,16";
+    const AXIS_LABEL = dark ? "rgba(255,255,255,0.28)" : "rgba(0,0,0,0.4)";
+
     const dpr = window.devicePixelRatio || 1;
     const W = 460, H = 130;
     canvas.width = W * dpr; canvas.height = H * dpr;
@@ -2121,50 +2155,50 @@ function MoveHeatmapCanvas({ moves }: { moves: ProfileStats["worst_moves"] }) {
 
     // Phase stripe labels
     const phases = [
-      { label: "Opening (1–15)",     start: 0, end: 3,  col: "#4ade80" },
-      { label: "Middlegame (16–35)", start: 3, end: 7,  col: "#5b8ef5" },
-      { label: "Endgame (36+)",      start: 7, end: N,  col: "#f59e0b" },
+      { label: "Opening (1–15)",     start: 0, end: 3,  col: GREEN },
+      { label: "Middlegame (16–35)", start: 3, end: 7,  col: BLUE },
+      { label: "Endgame (36+)",      start: 7, end: N,  col: AMBER },
     ];
     phases.forEach(ph => {
       const x1 = lp + ph.start * cw, x2 = lp + ph.end * cw;
-      ctx.fillStyle = ph.col + "0d"; ctx.fillRect(x1, tp, x2 - x1, rh * 2);
-      ctx.fillStyle = ph.col + "30"; ctx.fillRect(x1, tp - 18, x2 - x1 - 1, 14);
-      ctx.fillStyle = ph.col; ctx.font = "700 7px system-ui, sans-serif";
+      ctx.fillStyle = `rgba(${ph.col},0.05)`; ctx.fillRect(x1, tp, x2 - x1, rh * 2);
+      ctx.fillStyle = `rgba(${ph.col},0.19)`; ctx.fillRect(x1, tp - 18, x2 - x1 - 1, 14);
+      ctx.fillStyle = `rgb(${ph.col})`; ctx.font = "700 7px system-ui, sans-serif";
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.fillText(ph.label, (x1 + x2) / 2, tp - 11);
     });
 
     // Row labels
     ctx.textAlign = "right"; ctx.textBaseline = "middle";
-    ctx.fillStyle = "#ef4444"; ctx.font = "700 8px system-ui, sans-serif";
+    ctx.fillStyle = `rgb(${RED})`; ctx.font = "700 8px system-ui, sans-serif";
     ctx.fillText("Blunders", lp - 4, tp + rh / 2);
-    ctx.fillStyle = "#f97316";
+    ctx.fillStyle = `rgb(${ORANGE})`;
     ctx.fillText("Mistakes", lp - 4, tp + rh + rh / 2);
 
     for (let b = 0; b < N; b++) {
       const x = lp + b * cw;
       const bv = blunders[b] / maxV, mv = mistakes[b] / maxV;
-      ctx.fillStyle = `rgba(239,68,68,${0.06 + bv * 0.84})`;
+      ctx.fillStyle = `rgba(${RED},${0.06 + bv * 0.84})`;
       ctx.fillRect(x + 1, tp + 1, cw - 2, rh - 2);
       if (blunders[b] > 0) {
-        ctx.fillStyle = bv > 0.5 ? "rgba(255,255,255,0.9)" : "#ef4444";
+        ctx.fillStyle = bv > 0.5 ? `rgba(${HI_TEXT},0.9)` : `rgb(${RED})`;
         ctx.font = `${bv > 0.6 ? "900" : "700"} 10px system-ui, sans-serif`;
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
         ctx.fillText(String(blunders[b]), x + cw / 2, tp + rh / 2);
       }
-      ctx.fillStyle = `rgba(249,115,22,${0.06 + mv * 0.84})`;
+      ctx.fillStyle = `rgba(${ORANGE},${0.06 + mv * 0.84})`;
       ctx.fillRect(x + 1, tp + rh + 1, cw - 2, rh - 2);
       if (mistakes[b] > 0) {
-        ctx.fillStyle = mv > 0.5 ? "rgba(255,255,255,0.9)" : "#f97316";
+        ctx.fillStyle = mv > 0.5 ? `rgba(${HI_TEXT},0.9)` : `rgb(${ORANGE})`;
         ctx.font = `${mv > 0.6 ? "900" : "700"} 10px system-ui, sans-serif`;
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
         ctx.fillText(String(mistakes[b]), x + cw / 2, tp + rh + rh / 2);
       }
-      ctx.fillStyle = "rgba(255,255,255,0.28)";
+      ctx.fillStyle = AXIS_LABEL;
       ctx.font = "600 7px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "top";
       ctx.fillText(`${b * BUCKET + 1}`, x + cw / 2, tp + rh * 2 + 4);
     }
-  }, [moves]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [moves, theme]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   if (moves.length === 0) return null;
   return (
@@ -2185,12 +2219,16 @@ function OpeningGapMap({ stats }: { stats: ProfileStats }) {
   })).filter(r => r.count >= 2).sort((a, b) => b.count - a.count);
   if (rows.length === 0) return null;
   const gaps = rows.filter(r => r.score < 45);
-  const sc = (s: number) => s >= 65 ? "#4ade80" : s >= 45 ? "#f59e0b" : "#ef4444";
+  const sc = (s: number) => s >= 65
+    ? { color: "var(--clr-best)",    bg: "var(--tint-green)", border: "var(--border-green)" }
+    : s >= 45
+    ? { color: "var(--accent-amber)", bg: "var(--tint-gold)", border: "var(--border-gold)" }
+    : { color: "var(--clr-blunder)", bg: "var(--tint-red)",   border: "var(--border-red)" };
   const lb = (s: number) => s >= 65 ? "STRENGTH" : s >= 45 ? "AVERAGE" : "NEEDS WORK";
   return (
     <div style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
       <div style={{ padding: "11px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ color: "#ef4444", fontSize: 13 }}>△</span>
+        <span style={{ color: "var(--clr-blunder)", fontSize: 13 }}>△</span>
         <span style={{ fontWeight: 800, fontSize: 12, color: "var(--text-primary)" }}>Repertoire Gap Detection</span>
         <span style={{ marginLeft: "auto", fontSize: 13, color: "var(--text-muted)" }}>{gaps.length} gap{gaps.length !== 1 ? "s" : ""} · {rows.filter(r => r.score >= 65).length} strength{rows.filter(r => r.score >= 65).length !== 1 ? "s" : ""}</span>
       </div>
@@ -2199,17 +2237,17 @@ function OpeningGapMap({ stats }: { stats: ProfileStats }) {
           <div key={r.name} style={{ display: "grid", gridTemplateColumns: "1fr 52px 80px 72px", gap: 8, alignItems: "center" }}>
             <div style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{r.name}</div>
             <div style={{ height: 18, background: "rgba(255,255,255,0.05)", borderRadius: 3, overflow: "hidden" }}>
-              <div style={{ height: "100%", width: r.score + "%", background: sc(r.score), opacity: 0.75, transition: "width 0.8s ease" }} />
+              <div style={{ height: "100%", width: r.score + "%", background: sc(r.score).color, opacity: 0.75, transition: "width 0.8s ease" }} />
             </div>
-            <div style={{ fontSize: 12, fontWeight: 800, color: sc(r.score), fontVariantNumeric: "tabular-nums" as const, textAlign: "right" as const }}>{r.score}% · {r.count}g</div>
-            <div style={{ fontSize: 7, fontWeight: 800, textTransform: "uppercase" as const, letterSpacing: "0.06em", color: sc(r.score), textAlign: "center" as const, background: sc(r.score) + "18", border: `1px solid ${sc(r.score)}38`, borderRadius: 4, padding: "2px 5px" }}>{lb(r.score)}</div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: sc(r.score).color, fontVariantNumeric: "tabular-nums" as const, textAlign: "right" as const }}>{r.score}% · {r.count}g</div>
+            <div style={{ fontSize: 7, fontWeight: 800, textTransform: "uppercase" as const, letterSpacing: "0.06em", color: sc(r.score).color, textAlign: "center" as const, background: sc(r.score).bg, border: `1px solid ${sc(r.score).border}`, borderRadius: 4, padding: "2px 5px" }}>{lb(r.score)}</div>
           </div>
         ))}
       </div>
       {gaps.length > 0 && (
-        <div style={{ padding: "9px 16px 11px", borderTop: "1px solid var(--border)", background: "rgba(239,68,68,0.04)" }}>
+        <div style={{ padding: "9px 16px 11px", borderTop: "1px solid var(--border)", background: "var(--tint-red)" }}>
           <span style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.55 }}>
-            <span style={{ color: "#ef4444", fontWeight: 800 }}>Priority: </span>
+            <span style={{ color: "var(--clr-blunder)", fontWeight: 800 }}>Priority: </span>
             {gaps.slice(0, 2).map(g => g.name).join(" and ")} score{gaps.length > 1 ? "" : "s"} below 45% — study these sublines first to close the biggest Elo gap.
           </span>
         </div>
@@ -2218,19 +2256,10 @@ function OpeningGapMap({ stats }: { stats: ProfileStats }) {
   );
 }
 
-// ── 4-tier helper ────────────────────────────────────────────────────────────
-
-function tier(score: number): { label: string; color: string; bg: string; border: string } {
-  if (score >= 80) return { label: "Exceptional", color: "#4ade80", bg: "rgba(74,222,128,0.10)",  border: "rgba(74,222,128,0.25)" };
-  if (score >= 60) return { label: "Excellent",   color: "#5b8ef5", bg: "rgba(91,142,245,0.10)",  border: "rgba(91,142,245,0.25)" };
-  if (score >= 40) return { label: "Needs Work",  color: "#f59e0b", bg: "rgba(245,158,11,0.10)",  border: "rgba(245,158,11,0.25)" };
-  return           { label: "Urgent",             color: "#ef4444", bg: "rgba(239,68,68,0.10)",   border: "rgba(239,68,68,0.25)" };
-}
-
 // ── Skill row ─────────────────────────────────────────────────────────────────
 
 function SkillRow({ label, tooltip, score }: { label: string; tooltip: string; score: number }) {
-  const t = tier(score);
+  const t = tierColor(score);
   return (
     <div style={{ padding: "9px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 5 }}>
@@ -2280,10 +2309,10 @@ function SkillsAssessment({ stats }: { stats: ProfileStats }) {
   ];
 
   const tierLegend = [
-    { label: "Exceptional ≥80", color: "#4ade80" },
-    { label: "Excellent 60–79", color: "#5b8ef5" },
-    { label: "Needs Work 40–59", color: "#f59e0b" },
-    { label: "Urgent <40",       color: "#ef4444" },
+    { label: "Exceptional ≥80", color: "var(--clr-best)" },
+    { label: "Excellent 60–79", color: "var(--accent-blue)" },
+    { label: "Needs Work 40–59", color: "var(--accent-amber)" },
+    { label: "Urgent <40",       color: "var(--clr-blunder)" },
   ];
 
   const radarAxes = [
@@ -2309,7 +2338,7 @@ function SkillsAssessment({ stats }: { stats: ProfileStats }) {
           <RadarChart8D axes={radarAxes} />
           <div style={{ flex: 1, minWidth: 160, display: "flex", flexDirection: "column" as const, gap: 6 }}>
             {radarAxes.map(a => {
-              const t = tier(a.score);
+              const t = tierColor(a.score);
               return (
                 <div key={a.label.replace("\n", " ")} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <div style={{ width: 8, height: 8, borderRadius: "50%", background: t.color, flexShrink: 0 }} />
@@ -2379,9 +2408,7 @@ function PsychSection({ stats }: { stats: ProfileStats }) {
   // Fighting Chess Index (after Smerdon 2017): penalises draws, especially short ones
   const fci = Math.round(Math.max(0, Math.min(100, 100 - drawRatePct * 1.3)));
 
-  const tierCol = (v: number) => v >= 80 ? "#4ade80" : v >= 60 ? "#5b8ef5" : v >= 40 ? "#f59e0b" : "#ef4444";
-  const tierLbl = (v: number) => v >= 80 ? "Exceptional" : v >= 60 ? "Excellent" : v >= 40 ? "Needs Work" : "Urgent";
-  const tierBg  = (v: number) => v >= 80 ? "rgba(74,222,128,0.09)" : v >= 60 ? "rgba(91,142,245,0.09)" : v >= 40 ? "rgba(245,158,11,0.09)" : "rgba(239,68,68,0.09)";
+  const tierLbl = (v: number) => tierColor(v).label;
 
   const dials = [
     { label: "Tilt Resistance",   value: tiltResistance, tip: "Inverse of squander rate — how stable you are when ahead" },
@@ -2394,16 +2421,16 @@ function PsychSection({ stats }: { stats: ProfileStats }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <SectionBanner icon="◉" title="Psychological Profile" desc={`Mental game metrics from ${stats.total_games} games · Overall score: ${overallPsych}/100 (${tierLbl(overallPsych)})`} iconColor="#5b8ef5" />
+      <SectionBanner icon="◉" title="Psychological Profile" desc={`Mental game metrics from ${stats.total_games} games · Overall score: ${overallPsych}/100 (${tierLbl(overallPsych)})`} iconColor="var(--accent-blue)" />
 
       {/* 4 dial gauges */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
         {dials.map(d => (
-          <div key={d.label} style={{ background: "var(--bg-surface)", border: `1px solid ${tierCol(d.value)}33`, borderRadius: 12, padding: "14px 12px 10px", display: "flex", flexDirection: "column" as const, alignItems: "center", gap: 4 }}>
-            <PsychDial value={d.value} color={tierCol(d.value)} size={84} />
-            <div style={{ fontSize: 18, fontWeight: 900, color: tierCol(d.value), fontVariantNumeric: "tabular-nums" as const, lineHeight: 1, marginTop: 4 }}>{Math.round(d.value)}</div>
+          <div key={d.label} style={{ background: "var(--bg-surface)", border: `1px solid ${tierColor(d.value).border}`, borderRadius: 12, padding: "14px 12px 10px", display: "flex", flexDirection: "column" as const, alignItems: "center", gap: 4 }}>
+            <PsychDial value={d.value} color={tierColor(d.value).color} size={84} />
+            <div style={{ fontSize: 18, fontWeight: 900, color: tierColor(d.value).color, fontVariantNumeric: "tabular-nums" as const, lineHeight: 1, marginTop: 4 }}>{Math.round(d.value)}</div>
             <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", textAlign: "center" as const, lineHeight: 1.3 }}>{d.label}</div>
-            <div style={{ fontSize: 12, fontWeight: 800, color: tierCol(d.value), textTransform: "uppercase" as const, letterSpacing: "0.06em", background: tierBg(d.value), border: `1px solid ${tierCol(d.value)}40`, padding: "2px 7px", borderRadius: 4, marginTop: 2 }}>{tierLbl(d.value)}</div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: tierColor(d.value).color, textTransform: "uppercase" as const, letterSpacing: "0.06em", background: tierColor(d.value).bg, border: `1px solid ${tierColor(d.value).border}`, padding: "2px 7px", borderRadius: 4, marginTop: 2 }}>{tierLbl(d.value)}</div>
             <div style={{ fontSize: 13, color: "var(--text-muted)", textAlign: "center" as const, lineHeight: 1.35, marginTop: 3 }}>{d.tip}</div>
           </div>
         ))}
@@ -2415,7 +2442,7 @@ function PsychSection({ stats }: { stats: ProfileStats }) {
         {/* Conversion breakdown */}
         <div style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 12, padding: "16px" }}>
           <div style={{ fontSize: 13, fontWeight: 800, color: "var(--text-primary)", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ color: "#4ade80" }}>◎</span> Conversion Intelligence
+            <span style={{ color: "var(--clr-best)" }}>◎</span> Conversion Intelligence
           </div>
           {[
             { label: "Winning positions reached",    value: stats.games_reached_winning ?? 0,      total: stats.total_games, fmt: "count" },
@@ -2423,7 +2450,7 @@ function PsychSection({ stats }: { stats: ProfileStats }) {
             { label: "Squandered advantages",         value: stats.games_squandered ?? 0,            total: stats.games_reached_winning ?? 1, fmt: "pct-bad" },
           ].map(row => {
             const pct = row.fmt === "count" ? (row.value / (stats.total_games || 1)) * 100 : (row.value / (row.total || 1)) * 100;
-            const barColor = row.fmt === "pct-bad" ? "#ef4444" : "#4ade80";
+            const barColor = row.fmt === "pct-bad" ? "var(--clr-blunder)" : "var(--clr-best)";
             return (
               <div key={row.label} style={{ marginBottom: 9 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
@@ -2441,7 +2468,7 @@ function PsychSection({ stats }: { stats: ProfileStats }) {
         {/* Pressure breakdown */}
         <div style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 12, padding: "16px" }}>
           <div style={{ fontSize: 13, fontWeight: 800, color: "var(--text-primary)", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ color: "#5b8ef5" }}>◈</span> Pressure & Resilience
+            <span style={{ color: "var(--accent-blue)" }}>◈</span> Pressure & Resilience
           </div>
           {[
             { label: "Error rate when winning",  value: stats.winning_error_rate, unit: "%", invert: true },
@@ -2450,8 +2477,8 @@ function PsychSection({ stats }: { stats: ProfileStats }) {
             { label: "Clean games (no blunders)", value: stats.clean_game_rate,   unit: "%", invert: false },
           ].map(row => {
             const barColor = row.invert
-              ? (row.value < 15 ? "#4ade80" : row.value < 30 ? "#f59e0b" : "#ef4444")
-              : (row.value > 60 ? "#4ade80" : row.value > 40 ? "#5b8ef5" : "#f59e0b");
+              ? (row.value < 15 ? "var(--clr-best)" : row.value < 30 ? "var(--accent-amber)" : "var(--clr-blunder)")
+              : (row.value > 60 ? "var(--clr-best)" : row.value > 40 ? "var(--accent-blue)" : "var(--accent-amber)");
             return (
               <div key={row.label} style={{ marginBottom: 9 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
@@ -2472,18 +2499,18 @@ function PsychSection({ stats }: { stats: ProfileStats }) {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
           <div style={{ textAlign: "center" as const }}>
             <div style={{ fontSize: 13, fontWeight: 800, textTransform: "uppercase" as const, letterSpacing: "0.08em", color: "var(--text-muted)", marginBottom: 6 }}>Fighting Chess Index</div>
-            <div style={{ fontSize: 28, fontWeight: 900, color: tierCol(fci), fontVariantNumeric: "tabular-nums" as const, lineHeight: 1 }}>{fci}</div>
-            <div style={{ fontSize: 12, fontWeight: 800, color: tierCol(fci), textTransform: "uppercase" as const, letterSpacing: "0.06em", marginTop: 4 }}>{tierLbl(fci)}</div>
+            <div style={{ fontSize: 28, fontWeight: 900, color: tierColor(fci).color, fontVariantNumeric: "tabular-nums" as const, lineHeight: 1 }}>{fci}</div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: tierColor(fci).color, textTransform: "uppercase" as const, letterSpacing: "0.06em", marginTop: 4 }}>{tierLbl(fci)}</div>
             <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 3 }}>Smerdon 2017 · FCI = 100 − draw_rate×1.3</div>
           </div>
           <div style={{ textAlign: "center" as const }}>
             <div style={{ fontSize: 13, fontWeight: 800, textTransform: "uppercase" as const, letterSpacing: "0.08em", color: "var(--text-muted)", marginBottom: 6 }}>Decisive Games</div>
-            <div style={{ fontSize: 28, fontWeight: 900, color: tierCol(100 - drawRatePct), fontVariantNumeric: "tabular-nums" as const, lineHeight: 1 }}>{Math.round(100 - drawRatePct)}%</div>
+            <div style={{ fontSize: 28, fontWeight: 900, color: tierColor(100 - drawRatePct).color, fontVariantNumeric: "tabular-nums" as const, lineHeight: 1 }}>{Math.round(100 - drawRatePct)}%</div>
             <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 7 }}>{stats.wins + stats.losses} decisive · {stats.draws} drawn</div>
           </div>
           <div style={{ textAlign: "center" as const }}>
             <div style={{ fontSize: 13, fontWeight: 800, textTransform: "uppercase" as const, letterSpacing: "0.08em", color: "var(--text-muted)", marginBottom: 6 }}>Squander Rate</div>
-            <div style={{ fontSize: 28, fontWeight: 900, color: (stats.squander_rate ?? 0) > 30 ? "#ef4444" : (stats.squander_rate ?? 0) > 15 ? "#f59e0b" : "#4ade80", fontVariantNumeric: "tabular-nums" as const, lineHeight: 1 }}>{Math.round(stats.squander_rate ?? 0)}%</div>
+            <div style={{ fontSize: 28, fontWeight: 900, color: (stats.squander_rate ?? 0) > 30 ? "var(--clr-blunder)" : (stats.squander_rate ?? 0) > 15 ? "var(--accent-amber)" : "var(--clr-best)", fontVariantNumeric: "tabular-nums" as const, lineHeight: 1 }}>{Math.round(stats.squander_rate ?? 0)}%</div>
             <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 7 }}>{stats.games_squandered ?? 0} of {stats.games_reached_winning ?? 0} wins dropped</div>
           </div>
         </div>
@@ -2517,7 +2544,7 @@ function SummarySection({ stats, ratingHistory }: { stats: ProfileStats; ratingH
   const endKey  = Object.keys(per).find(k => k.toLowerCase().includes("end"))  ?? "";
   const phaseScore = (key: string) => Math.max(0, Math.min(100, 100 - (per[key] ?? 0.2) * 350));
   const bxp = stats.blunder_by_phase ?? {};
-  const scoreColor = (s: number) => s >= 80 ? "#4ade80" : s >= 60 ? "var(--accent-blue)" : s >= 40 ? "var(--gold)" : "var(--clr-blunder)";
+  const scoreColor = (s: number) => s >= 80 ? "var(--clr-best)" : s >= 60 ? "var(--accent-blue)" : s >= 40 ? "var(--gold)" : "var(--clr-blunder)";
 
   const phases = [
     { label: "Opening",    key: openKey, score: phaseScore(openKey), errorPct: Math.min((per[openKey] ?? 0) * 100, 100), blunders: bxp["Opening"] ?? 0 },
@@ -2541,8 +2568,8 @@ function SummarySection({ stats, ratingHistory }: { stats: ProfileStats; ratingH
       <SectionBanner icon="◎" title="Performance Summary" desc={`${stats.player_name} · ${stats.total_games} games analysed · Overall performance overview`} iconColor="var(--gold)" />
 
       {/* Player Identity Card */}
-      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 18px", background: `${styleTag.color}10`, border: `1px solid ${styleTag.color}28`, borderRadius: 14 }}>
-        <div style={{ width: 40, height: 40, borderRadius: 11, background: `${styleTag.color}18`, border: `1px solid ${styleTag.color}35`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>{styleTag.icon}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 18px", background: styleTag.bg, border: `1px solid ${styleTag.border}`, borderRadius: 14 }}>
+        <div style={{ width: 40, height: 40, borderRadius: 11, background: `color-mix(in srgb, ${styleTag.color} 9%, transparent)`, border: `1px solid ${styleTag.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>{styleTag.icon}</div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 800, textTransform: "uppercase" as const, letterSpacing: "0.1em", color: "var(--text-muted)", marginBottom: 3 }}>Playing Identity</div>
           <div style={{ fontSize: 16, fontWeight: 900, color: styleTag.color, lineHeight: 1 }}>{styleTag.tag}</div>
@@ -2589,11 +2616,11 @@ function SummarySection({ stats, ratingHistory }: { stats: ProfileStats; ratingH
       {/* Stat tiles */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
         {([
-          { label: "Win Rate",    value: `${stats.win_rate}%`,       color: stats.win_rate > 50 ? "#4ade80" : "#ef4444", sub: `${stats.wins}W · ${stats.draws}D · ${stats.losses}L` },
-          { label: "Avg CP Loss", value: `${stats.avg_cp_loss}`,     color: stats.avg_cp_loss < 30 ? "#4ade80" : stats.avg_cp_loss < 50 ? "var(--gold)" : "#f59e0b", sub: "per player move" },
-          { label: "Precision",   value: `${stats.precision_rate}%`, color: stats.precision_rate > 60 ? "#5b8ef5" : "var(--gold)", sub: "accurate + strong" },
-          { label: "Clean Games", value: `${stats.clean_game_rate}%`,color: stats.clean_game_rate > 50 ? "#4ade80" : "var(--gold)", sub: `${stats.clean_games} of ${stats.total_games}` },
-          { label: "Conversion",  value: convRate > 0 ? `${convRate.toFixed(0)}%` : "—", color: convRate >= 60 ? "#4ade80" : convRate >= 40 ? "var(--gold)" : "#ef4444", sub: "from winning pos." },
+          { label: "Win Rate",    value: `${stats.win_rate}%`,       color: stats.win_rate > 50 ? "var(--clr-best)" : "var(--clr-blunder)", sub: `${stats.wins}W · ${stats.draws}D · ${stats.losses}L` },
+          { label: "Avg CP Loss", value: `${stats.avg_cp_loss}`,     color: stats.avg_cp_loss < 30 ? "var(--clr-best)" : stats.avg_cp_loss < 50 ? "var(--gold)" : "var(--accent-amber)", sub: "per player move" },
+          { label: "Precision",   value: `${stats.precision_rate}%`, color: stats.precision_rate > 60 ? "var(--accent-blue)" : "var(--gold)", sub: "accurate + strong" },
+          { label: "Clean Games", value: `${stats.clean_game_rate}%`,color: stats.clean_game_rate > 50 ? "var(--clr-best)" : "var(--gold)", sub: `${stats.clean_games} of ${stats.total_games}` },
+          { label: "Conversion",  value: convRate > 0 ? `${convRate.toFixed(0)}%` : "—", color: convRate >= 60 ? "var(--clr-best)" : convRate >= 40 ? "var(--gold)" : "var(--clr-blunder)", sub: "from winning pos." },
           { label: "Total Moves", value: `${stats.total_player_moves}`, color: "var(--text-secondary)", sub: "player moves analysed" },
         ] as { label: string; value: string; color: string; sub: string }[]).map(s => (
           <div key={s.label} style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", textAlign: "center" as const }}>
@@ -2644,7 +2671,7 @@ function OpeningAnalysisSection({ stats }: { stats: ProfileStats }) {
     : 0;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14, animation: "fade-slide-up 0.22s ease" }}>
-      <SectionBanner icon="◆" title="Opening Analysis" desc="Repertoire performance, gap map, and opening fitness matrix" iconColor="#4ade80" />
+      <SectionBanner icon="◆" title="Opening Analysis" desc="Repertoire performance, gap map, and opening fitness matrix" iconColor="var(--clr-best)" />
       <OpeningGapMap stats={stats} />
       <OpeningFitnessMatrix stats={stats} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
@@ -2776,7 +2803,7 @@ function PuzzleModal({ move, onClose }: { move: WorstMove; onClose: () => void }
       <div style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 20, width: "100%", maxWidth: 820, maxHeight: "92vh", overflowY: "auto", display: "flex", flexDirection: "column" }}>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
-          <span style={{ fontSize: 13, fontWeight: 800, background: isBlunder ? "rgba(239,68,68,0.12)" : "rgba(249,115,22,0.12)", color: clColor, border: `1px solid ${clColor}44`, borderRadius: 4, padding: "2px 8px", letterSpacing: "0.1em", textTransform: "uppercase" as const }}>
+          <span style={{ fontSize: 13, fontWeight: 800, background: isBlunder ? "var(--tint-red)" : "var(--tint-gold)", color: clColor, border: `1px solid ${isBlunder ? "var(--border-red)" : "var(--border-gold)"}`, borderRadius: 4, padding: "2px 8px", letterSpacing: "0.1em", textTransform: "uppercase" as const }}>
             {move.classification}
           </span>
           <span style={{ color: "var(--text-primary)", fontWeight: 700, fontSize: 14 }}>
@@ -2813,7 +2840,7 @@ function PuzzleModal({ move, onClose }: { move: WorstMove; onClose: () => void }
                 <div style={{
                   padding: "10px 12px", borderRadius: 8, fontSize: 13, lineHeight: 1.5, fontWeight: 600,
                   background: solveState === "correct" ? "rgba(74,222,128,0.1)" : solveState === "wrong" ? "rgba(239,68,68,0.1)" : solveState === "shown" ? "rgba(91,142,245,0.1)" : "var(--bg-elevated)",
-                  color: solveState === "correct" ? "#4ade80" : solveState === "wrong" ? "#ef4444" : solveState === "shown" ? "#5b8ef5" : "var(--text-secondary)",
+                  color: solveState === "correct" ? "var(--clr-best)" : solveState === "wrong" ? "var(--clr-blunder)" : solveState === "shown" ? "var(--accent-blue)" : "var(--text-secondary)",
                   border: `1px solid ${solveState === "correct" ? "rgba(74,222,128,0.3)" : solveState === "wrong" ? "rgba(239,68,68,0.3)" : solveState === "shown" ? "rgba(91,142,245,0.3)" : "var(--border)"}`,
                 }}>
                   {solveState === "correct" && "✓ "}{solveState === "wrong" && "✗ "}{message}
@@ -2833,12 +2860,12 @@ function PuzzleModal({ move, onClose }: { move: WorstMove; onClose: () => void }
                   </button>
                 )}
                 {solveState !== "shown" && (
-                  <button onClick={showSolution} style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(91,142,245,0.3)", background: "rgba(91,142,245,0.08)", color: "#5b8ef5", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                  <button onClick={showSolution} style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(91,142,245,0.3)", background: "rgba(91,142,245,0.08)", color: "var(--accent-blue)", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                     Show Solution
                   </button>
                 )}
                 {solveState === "shown" && (
-                  <button onClick={retry} style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(74,222,128,0.3)", background: "rgba(74,222,128,0.08)", color: "#4ade80", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                  <button onClick={retry} style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(74,222,128,0.3)", background: "rgba(74,222,128,0.08)", color: "var(--clr-best)", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                     ↺ Try Again
                   </button>
                 )}
@@ -2865,7 +2892,7 @@ function PuzzleModal({ move, onClose }: { move: WorstMove; onClose: () => void }
             {/* Wrong attempt: show what went wrong but keep the challenge */}
             {solveState === "wrong" && (
               <div style={{ background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 12, padding: "14px 16px" }}>
-                <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase" as const, letterSpacing: "0.1em", color: "#ef4444", marginBottom: 8 }}>Not quite</div>
+                <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase" as const, letterSpacing: "0.1em", color: "var(--clr-blunder)", marginBottom: 8 }}>Not quite</div>
                 <p style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.7 }}>
                   That&apos;s not the engine&apos;s top choice. Try again or use a hint to find <strong style={{ color: "var(--text-primary)" }}>{move.best_san}</strong>.
                 </p>
@@ -2889,7 +2916,7 @@ function PuzzleModal({ move, onClose }: { move: WorstMove; onClose: () => void }
 
                 {/* Why the engine move is best */}
                 <div style={{ background: "rgba(74,222,128,0.05)", border: "1px solid rgba(74,222,128,0.2)", borderRadius: 12, padding: "14px 16px" }}>
-                  <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase" as const, letterSpacing: "0.1em", color: "#4ade80", marginBottom: 8 }}>Why {move.best_san} is best</div>
+                  <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase" as const, letterSpacing: "0.1em", color: "var(--clr-best)", marginBottom: 8 }}>Why {move.best_san} is best</div>
                   <p style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.7 }}>
                     {whyBest.split(/(\*\*[^*]+\*\*)/).map((part, i) =>
                       part.startsWith("**") && part.endsWith("**")
@@ -2901,8 +2928,8 @@ function PuzzleModal({ move, onClose }: { move: WorstMove; onClose: () => void }
 
                 {/* Engine line */}
                 <div style={{ background: "rgba(91,142,245,0.06)", border: "1px solid rgba(91,142,245,0.2)", borderRadius: 12, padding: "14px 16px" }}>
-                  <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase" as const, letterSpacing: "0.1em", color: "#5b8ef5", marginBottom: 8 }}>Engine Line</div>
-                  <p style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: "#5b8ef5", lineHeight: 1.6 }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase" as const, letterSpacing: "0.1em", color: "var(--accent-blue)", marginBottom: 8 }}>Engine Line</div>
+                  <p style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--accent-blue)", lineHeight: 1.6 }}>
                     {move.move_number}{"."} <strong>{move.best_san}</strong> — best continuation secures the advantage established by this move.
                   </p>
                 </div>
@@ -2952,17 +2979,17 @@ function ErrorList({ moves, title }: { moves: WorstMove[]; title: string }) {
               <span style={{ color: "var(--text-muted)", fontSize: 12, fontWeight: 700 }}>#{i + 1}</span>
               <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, fontSize: 13, color: "var(--text-primary)" }}>{m.san}</span>
               <span>
-                <span style={{ fontSize: 12, fontWeight: 800, padding: "2px 6px", borderRadius: 4, background: isBlunder ? "rgba(239,68,68,0.12)" : "rgba(249,115,22,0.12)", color: clColor, border: `1px solid ${clColor}44` }}>
+                <span style={{ fontSize: 12, fontWeight: 800, padding: "2px 6px", borderRadius: 4, background: isBlunder ? "var(--tint-red)" : "var(--tint-gold)", color: clColor, border: `1px solid ${isBlunder ? "var(--border-red)" : "var(--border-gold)"}` }}>
                   {isBlunder ? "BLUNDER" : "MISTAKE"}
                 </span>
               </span>
               <span style={{ color: cpColor(m.cp_loss), fontWeight: 800, fontSize: 13, fontVariantNumeric: "tabular-nums" as const }}>−{m.cp_loss}cp</span>
-              <span style={{ color: "#4ade80", fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 13 }}>→ {m.best_san}</span>
+              <span style={{ color: "var(--clr-best)", fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 13 }}>→ {m.best_san}</span>
               <span style={{ color: "var(--text-muted)", fontSize: 12 }}>Mv {m.move_number} · G{m.game} · {m.pos_context ?? ""}</span>
               <button
                 onClick={() => setOpenMove(m)}
                 disabled={!m.fen}
-                style={{ padding: "5px 12px", borderRadius: 7, border: `1px solid ${m.fen ? "rgba(91,142,245,0.4)" : "var(--border)"}`, background: m.fen ? "rgba(91,142,245,0.08)" : "transparent", color: m.fen ? "#5b8ef5" : "var(--text-muted)", fontSize: 12, fontWeight: 700, cursor: m.fen ? "pointer" : "not-allowed", whiteSpace: "nowrap" as const }}
+                style={{ padding: "5px 12px", borderRadius: 7, border: `1px solid ${m.fen ? "rgba(91,142,245,0.4)" : "var(--border)"}`, background: m.fen ? "rgba(91,142,245,0.08)" : "transparent", color: m.fen ? "var(--accent-blue)" : "var(--text-muted)", fontSize: 12, fontWeight: 700, cursor: m.fen ? "pointer" : "not-allowed", whiteSpace: "nowrap" as const }}
               >
                 {m.fen ? "Analyse ▶" : "No FEN"}
               </button>
@@ -2978,7 +3005,7 @@ function ErrorList({ moves, title }: { moves: WorstMove[]; title: string }) {
 // ── Tactics & Strategy from AI text ──────────────────────────────────────────
 
 // Sub-section accent colors — cycles through a palette per card index
-const TACTIC_COLORS = ["#5b8ef5", "#a78bfa", "#f472b6", "#34d399", "#fb923c"];
+const TACTIC_COLORS = ["var(--accent-blue)", "var(--accent-purple)", "var(--accent-pink)", "var(--clr-good)", "var(--clr-mistake)"];
 
 function TacticsStrategyPanel({ sections, phase }: { sections: ParsedSection[]; phase: "mid" | "end" }) {
   // AI nests tactical/endgame content as H4 subsections inside "### 4. TACTICAL & ENDGAME ANALYSIS"
@@ -3062,10 +3089,10 @@ function MiddlegameSection({ stats, profileText }: { stats: ProfileStats; profil
   const norm = (v: number) => Math.round((v / rawSum) * 100);
 
   const yusupovCategories = [
-    { label: "Endgame Technique",      pct: norm(technique),    color: "#f59e0b" },
-    { label: "Positional Misjudgment", pct: norm(positional),   color: "#5b8ef5" },
-    { label: "Tactical Oversight",     pct: norm(tactical),     color: "#ef4444" },
-    { label: "Time Pressure",          pct: norm(timePressure), color: "#a78bfa" },
+    { label: "Endgame Technique",      pct: norm(technique),    color: "var(--accent-amber)" },
+    { label: "Positional Misjudgment", pct: norm(positional),   color: "var(--accent-blue)" },
+    { label: "Tactical Oversight",     pct: norm(tactical),     color: "var(--clr-blunder)" },
+    { label: "Time Pressure",          pct: norm(timePressure), color: "var(--accent-purple)" },
   ].sort((a, b) => b.pct - a.pct);
 
   const midMoves = stats.worst_moves
@@ -3076,7 +3103,7 @@ function MiddlegameSection({ stats, profileText }: { stats: ProfileStats; profil
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14, animation: "fade-slide-up 0.22s ease" }}>
-      <SectionBanner icon="△" title="Middlegame Analysis" desc="Error categorization, critical mistakes with position review, and tactical patterns" iconColor="#5b8ef5" />
+      <SectionBanner icon="△" title="Middlegame Analysis" desc="Error categorization, critical mistakes with position review, and tactical patterns" iconColor="var(--accent-blue)" />
 
       {/* Stat tiles — unique to this tab */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
@@ -3084,7 +3111,7 @@ function MiddlegameSection({ stats, profileText }: { stats: ProfileStats; profil
           { label: "Middlegame Error",  value: `${midRate.toFixed(1)}%`,          color: midRate > 20 ? "var(--clr-blunder)" : "var(--gold)", sub: "phase error rate" },
           { label: "Blunders",          value: `${bxp["Middlegame"] ?? 0}`,       color: (bxp["Middlegame"] ?? 0) > 5 ? "var(--clr-blunder)" : "var(--gold)", sub: "in middlegame" },
           { label: "CP Loss (16–30)",   value: mra["16-30"]?.toFixed(1) ?? "—",  color: "var(--gold)", sub: "avg per move" },
-          { label: "CP Loss (31–50)",   value: mra["31-50"]?.toFixed(1) ?? "—",  color: "#5b8ef5",     sub: "avg per move" },
+          { label: "CP Loss (31–50)",   value: mra["31-50"]?.toFixed(1) ?? "—",  color: "var(--accent-blue)",     sub: "avg per move" },
         ] as { label: string; value: string; color: string; sub: string }[]).map(s => (
           <div key={s.label} style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px", textAlign: "center" as const }}>
             <div style={{ fontSize: 13, fontWeight: 800, textTransform: "uppercase" as const, letterSpacing: "0.08em", color: "var(--text-muted)", marginBottom: 4 }}>{s.label}</div>
@@ -3135,7 +3162,7 @@ function MiddlegameSection({ stats, profileText }: { stats: ProfileStats; profil
         if (!hasTactics) return null;
         return (
           <>
-            <div style={{ fontSize: 13, fontWeight: 800, textTransform: "uppercase" as const, letterSpacing: "0.1em", color: "#5b8ef5", marginBottom: -6 }}>Tactics & Strategy Patterns</div>
+            <div style={{ fontSize: 13, fontWeight: 800, textTransform: "uppercase" as const, letterSpacing: "0.1em", color: "var(--accent-blue)", marginBottom: -6 }}>Tactics & Strategy Patterns</div>
             <TacticsStrategyPanel sections={sections} phase="mid" />
           </>
         );
@@ -3175,7 +3202,7 @@ function EndgameSection({ stats, profileText }: { stats: ProfileStats; profileTe
       note: convRate >= 65
         ? `Strong — converts ${convRate.toFixed(0)}% of winning positions. Decisive technique under pressure.`
         : `Weak — only ${convRate.toFixed(0)}% conversion. Winning advantages slip away, costing Elo.`,
-      color: convRate >= 65 ? "#4ade80" : "#ef4444",
+      color: convRate >= 65 ? "var(--clr-best)" : "var(--clr-blunder)",
     },
     {
       type: "Endgame Accuracy",
@@ -3183,7 +3210,7 @@ function EndgameSection({ stats, profileText }: { stats: ProfileStats; profileTe
       note: endRate < 15
         ? `Clean — only ${endRate.toFixed(1)}% error rate after move 35. Technique is reliable.`
         : `${endRate.toFixed(1)}% error rate in endgames. Inaccuracies mount as pieces come off the board.`,
-      color: endRate < 15 ? "#4ade80" : "#f59e0b",
+      color: endRate < 15 ? "var(--clr-best)" : "var(--accent-amber)",
     },
     {
       type: "Late-Game Calculation",
@@ -3193,7 +3220,7 @@ function EndgameSection({ stats, profileText }: { stats: ProfileStats; profileTe
           ? `Good — ${cpLate.toFixed(1)}cp avg loss after move 50. Calculation holds in simplified positions.`
           : `${cpLate.toFixed(1)}cp avg loss after move 50. Calculation quality drops in late endgames.`
         : "Insufficient data — more games needed for late-endgame statistics.",
-      color: cpLate > 0 && cpLate < 30 ? "#4ade80" : cpLate > 0 ? "#f59e0b" : "var(--text-muted)",
+      color: cpLate > 0 && cpLate < 30 ? "var(--clr-best)" : cpLate > 0 ? "var(--accent-amber)" : "var(--text-muted)",
     },
     {
       type: "Defensive Resourcefulness",
@@ -3201,21 +3228,21 @@ function EndgameSection({ stats, profileText }: { stats: ProfileStats; profileTe
       note: (stats.losing_error_rate ?? 50) < 30
         ? "Resilient — holds positions well when behind. Good fighting spirit in defence."
         : `${stats.losing_error_rate ?? 0}% error rate in losing positions. Resistance breaks down under pressure.`,
-      color: (stats.losing_error_rate ?? 50) < 30 ? "#4ade80" : "#f59e0b",
+      color: (stats.losing_error_rate ?? 50) < 30 ? "var(--clr-best)" : "var(--accent-amber)",
     },
   ];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14, animation: "fade-slide-up 0.22s ease" }}>
-      <SectionBanner icon="◉" title="Endgame Analysis" desc="Conversion intelligence, technique assessment, endgame type strengths, and position review" iconColor="#f59e0b" />
+      <SectionBanner icon="◉" title="Endgame Analysis" desc="Conversion intelligence, technique assessment, endgame type strengths, and position review" iconColor="var(--accent-amber)" />
 
       {/* Stat tiles — unique to endgame */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
         {([
-          { label: "Endgame Error",    value: `${endRate.toFixed(1)}%`,         color: endRate > 15 ? "var(--gold)" : "#4ade80", sub: "phase error rate" },
-          { label: "Endgame Blunders", value: `${endBlunders}`,                  color: endBlunders > 3 ? "var(--gold)" : "#4ade80", sub: `of ${totalBlunders} total` },
-          { label: "CP Loss (50+)",    value: mra["50+"]?.toFixed(1) ?? "—",    color: "#5b8ef5", sub: "avg per move" },
-          { label: "Conversion Rate",  value: convRate > 0 ? `${convRate.toFixed(0)}%` : "—", color: convRate >= 60 ? "#4ade80" : "var(--gold)", sub: "from winning pos." },
+          { label: "Endgame Error",    value: `${endRate.toFixed(1)}%`,         color: endRate > 15 ? "var(--gold)" : "var(--clr-best)", sub: "phase error rate" },
+          { label: "Endgame Blunders", value: `${endBlunders}`,                  color: endBlunders > 3 ? "var(--gold)" : "var(--clr-best)", sub: `of ${totalBlunders} total` },
+          { label: "CP Loss (50+)",    value: mra["50+"]?.toFixed(1) ?? "—",    color: "var(--accent-blue)", sub: "avg per move" },
+          { label: "Conversion Rate",  value: convRate > 0 ? `${convRate.toFixed(0)}%` : "—", color: convRate >= 60 ? "var(--clr-best)" : "var(--gold)", sub: "from winning pos." },
         ] as { label: string; value: string; color: string; sub: string }[]).map(s => (
           <div key={s.label} style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px", textAlign: "center" as const }}>
             <div style={{ fontSize: 13, fontWeight: 800, textTransform: "uppercase" as const, letterSpacing: "0.08em", color: "var(--text-muted)", marginBottom: 4 }}>{s.label}</div>
@@ -3231,7 +3258,7 @@ function EndgameSection({ stats, profileText }: { stats: ProfileStats; profileTe
       {/* Endgame type strengths & weaknesses */}
       <div style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 14, overflow: "hidden" }}>
         <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ color: "#f59e0b", fontSize: 12 }}>◉</span>
+          <span style={{ color: "var(--accent-amber)", fontSize: 12 }}>◉</span>
           <span style={{ fontWeight: 800, fontSize: 13, color: "var(--text-primary)" }}>Endgame Strength Profile</span>
           <span style={{ marginLeft: "auto", fontSize: 13, color: "var(--text-muted)" }}>derived from your game patterns</span>
         </div>
@@ -3241,7 +3268,7 @@ function EndgameSection({ stats, profileText }: { stats: ProfileStats; profileTe
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                 <span style={{ fontSize: 13, lineHeight: 1 }}>{et.strength ? "✓" : "✗"}</span>
                 <span style={{ fontSize: 13, fontWeight: 800, color: et.color }}>{et.type}</span>
-                <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 800, padding: "1px 7px", borderRadius: 4, background: et.strength ? "rgba(74,222,128,0.1)" : "rgba(239,68,68,0.1)", color: et.color, border: `1px solid ${et.color}44` }}>
+                <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 800, padding: "1px 7px", borderRadius: 4, background: et.strength ? "var(--tint-green)" : "var(--tint-red)", color: et.color, border: `1px solid ${et.strength ? "var(--border-green)" : "var(--border-red)"}` }}>
                   {et.strength ? "STRONG" : "IMPROVE"}
                 </span>
               </div>
@@ -3251,7 +3278,7 @@ function EndgameSection({ stats, profileText }: { stats: ProfileStats; profileTe
         </div>
         {endMoves.length > 0 && (
           <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border)", background: "rgba(245,158,11,0.04)", fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6 }}>
-            <span style={{ color: "#f59e0b", fontWeight: 700 }}>Pattern:</span>{" "}
+            <span style={{ color: "var(--accent-amber)", fontWeight: 700 }}>Pattern:</span>{" "}
             {endMoves[0]?.pos_context === "winning"
               ? `Most endgame errors occur from winning positions — the biggest weakness is technique under pressure, not finding the endgame.`
               : `Endgame errors spread across equal and losing positions — focus on building a systematic endgame foundation.`}
@@ -3275,7 +3302,7 @@ function EndgameSection({ stats, profileText }: { stats: ProfileStats; profileTe
         if (!hasEnd) return null;
         return (
           <>
-            <div style={{ fontSize: 13, fontWeight: 800, textTransform: "uppercase" as const, letterSpacing: "0.1em", color: "#f59e0b", marginBottom: -6 }}>Endgame Technique Analysis</div>
+            <div style={{ fontSize: 13, fontWeight: 800, textTransform: "uppercase" as const, letterSpacing: "0.1em", color: "var(--accent-amber)", marginBottom: -6 }}>Endgame Technique Analysis</div>
             <TacticsStrategyPanel sections={sections} phase="end" />
           </>
         );
@@ -3290,7 +3317,7 @@ function BlunderMapSection({ stats }: { stats: ProfileStats }) {
   const worst = [...stats.worst_moves].sort((a, b) => b.cp_loss - a.cp_loss).slice(0, 15);
   const cpColor  = (cp: number) => cp > 150 ? "var(--clr-blunder)" : cp > 80 ? "var(--gold)" : "var(--text-secondary)";
   const normPhase = (p: string) => { const l = p.toLowerCase(); return l.includes("mid") ? "Middlegame" : l.includes("end") ? "Endgame" : "Opening"; };
-  const phaseCol  = (p: string) => { const n = normPhase(p); return n === "Middlegame" ? "var(--gold)" : n === "Endgame" ? "var(--clr-mistake)" : "#4ade80"; };
+  const phaseCol  = (p: string) => { const n = normPhase(p); return n === "Middlegame" ? "var(--gold)" : n === "Endgame" ? "var(--clr-mistake)" : "var(--clr-best)"; };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14, animation: "fade-slide-up 0.22s ease" }}>
@@ -3322,14 +3349,14 @@ function BlunderMapSection({ stats }: { stats: ProfileStats }) {
                   <span style={{ color: "var(--text-muted)", fontSize: 12, fontWeight: 700 }}>#{i+1}</span>
                   <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 12, color: "var(--text-primary)" }}>{m.san}</span>
                   <span>
-                    <span style={{ fontSize: 13, fontWeight: 800, padding: "2px 7px", borderRadius: 4, background: isBlunder ? "rgba(239,68,68,0.12)" : "rgba(249,115,22,0.12)", color: isBlunder ? "#ef4444" : "#f97316", border: `1px solid ${isBlunder ? "rgba(239,68,68,0.3)" : "rgba(249,115,22,0.3)"}` }}>
+                    <span style={{ fontSize: 13, fontWeight: 800, padding: "2px 7px", borderRadius: 4, background: isBlunder ? "rgba(239,68,68,0.12)" : "rgba(249,115,22,0.12)", color: isBlunder ? "var(--clr-blunder)" : "var(--clr-mistake)", border: `1px solid ${isBlunder ? "rgba(239,68,68,0.3)" : "rgba(249,115,22,0.3)"}` }}>
                       {isBlunder ? "BLUNDER" : "MISTAKE"}
                     </span>
                   </span>
                   <span style={{ color: phaseCol(m.phase), fontWeight: 700, fontSize: 13 }}>{normPhase(m.phase)}</span>
                   <span style={{ color: cpColor(m.cp_loss), fontWeight: 800, fontSize: 12, fontVariantNumeric: "tabular-nums" as const }}>−{m.cp_loss}cp</span>
                   <span style={{ color: "var(--text-muted)", fontSize: 12 }}>G{m.game}</span>
-                  <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 13, color: "#4ade80" }}>{m.best_san || "—"}</span>
+                  <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 13, color: "var(--clr-best)" }}>{m.best_san || "—"}</span>
                 </div>
               );
             })}
@@ -3710,7 +3737,7 @@ function ProfilePageContent() {
                     </h2>
                     {styleTag && (
                       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18, flexWrap: "wrap" }}>
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 7, background: styleTag.color + "12", border: "1px solid " + styleTag.color + "38", borderRadius: 8, padding: "5px 13px", fontSize: 12, fontWeight: 700, color: styleTag.color }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 7, background: styleTag.bg, border: `1px solid ${styleTag.border}`, borderRadius: 8, padding: "5px 13px", fontSize: 12, fontWeight: 700, color: styleTag.color }}>
                           <span style={{ width: 6, height: 6, background: styleTag.color, borderRadius: "50%", display: "inline-block", animation: "ai-pulse 2s ease-in-out infinite" }} />
                           {styleTag.tag}
                         </span>
@@ -3761,7 +3788,7 @@ function ProfilePageContent() {
               const midKey  = Object.keys(per).find(k => k.toLowerCase().includes("mid"))  ?? "";
               const endKey  = Object.keys(per).find(k => k.toLowerCase().includes("end"))  ?? "";
               const phaseScore = (key: string) => Math.max(0, Math.min(100, 100 - (per[key] ?? 0.2) * 350));
-              const dotColor = (s: number) => s >= 80 ? "#4ade80" : s >= 60 ? "#5b8ef5" : s >= 40 ? "#f59e0b" : "#ef4444";
+              const dotColor = (s: number) => s >= 80 ? "var(--clr-best)" : s >= 60 ? "var(--accent-blue)" : s >= 40 ? "var(--accent-amber)" : "var(--clr-blunder)";
               const tabs: { id: SidebarSection; icon: string; label: string; score?: number }[] = [
                 { id: "summary",    icon: "◎", label: "Summary" },
                 { id: "skills",     icon: "◈", label: "Skills" },
@@ -3781,7 +3808,7 @@ function ProfilePageContent() {
                         <button key={tab.id} onClick={() => setActiveSection(tab.id)}
                           style={{ display: "flex", alignItems: "center", gap: 7, padding: "10px 20px", borderRadius: 10, border: "none", flexShrink: 0,
                             background: active ? "var(--gold)" : "transparent",
-                            color: active ? "#1a1008" : "var(--text-secondary)",
+                            color: active ? "var(--gold-contrast)" : "var(--text-secondary)",
                             fontSize: 14, fontWeight: active ? 700 : 500, cursor: "pointer",
                             transition: "all 0.15s", whiteSpace: "nowrap" as const }}>
                           <span style={{ fontSize: 15, lineHeight: 1 }}>{tab.icon}</span>

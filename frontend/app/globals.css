@@ -16,11 +16,18 @@
   --gold-subtle:   rgba(201, 162, 68, 0.08);
   --gold-border:   rgba(201, 162, 68, 0.20);
   --gold-glow:     rgba(201, 162, 68, 0.14);
+  /* Text color for content sitting on a solid --gold fill (e.g. an active
+     tab). Dark mode's gold is bright, so dark text reads; light mode's gold
+     is a muted brown, so it needs light text instead -- can't be one fixed
+     hex across both themes. */
+  --gold-contrast: #1a1008;
 
   /* Accent blue — data & interactive only */
   --accent-blue:   #5b8ef5;
   --accent-green:  #4ade80;
   --accent-amber:  #f59e0b;
+  --accent-purple: #a78bfa;
+  --accent-pink:   #f472b6;
 
   /* Text — warm, not cool */
   --text-primary:   #e4dfd6;
@@ -93,8 +100,31 @@
   --gold-subtle:   rgba(138, 103, 20, 0.07);
   --gold-border:   rgba(138, 103, 20, 0.18);
   --gold-glow:     rgba(138, 103, 20, 0.10);
+  --gold-contrast: #faf7f1;
 
   --accent-blue:   #2563eb;
+  /* --accent-green/--accent-amber and the whole --clr-* move-quality scale
+     below were never redefined for light mode -- they kept the dark-theme
+     values (chosen to pop on near-black), which measure well under WCAG AA
+     against this theme's cream backgrounds (as low as ~1.1:1 for
+     --clr-good, versus the 4.5:1 normal text wants). Same deepen-for-light
+     treatment already applied to --tint-green/--tint-red/etc. below, just
+     extended to the solid foreground colors that actually carry text
+     (accuracy percentages, move-quality checkmarks, badges). All verified
+     >=4.4:1 against bg-surface/bg-elevated/bg-base.  */
+  --accent-green:  #0c6e2c;
+  --accent-amber:  #9c4a0a;
+  --accent-purple: #6d28d9;
+  --accent-pink:   #be185d;
+
+  --clr-brilliant:  #0a6b64;
+  --clr-best:       #0c6e2c;
+  --clr-excellent:  #0c6e2c;
+  --clr-good:       #1a7833;
+  --clr-inaccuracy: #9c4a0a;
+  --clr-mistake:    #a83d0f;
+  --clr-blunder:    #b41e1e;
+  --clr-miss:       #991b1b;
 
   --text-primary:   #1a1410;
   --text-secondary: #5a5248;

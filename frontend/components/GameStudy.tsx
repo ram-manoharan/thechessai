@@ -330,7 +330,7 @@ export function StudyPuzzleModal({
   }
 
   const cfg = CLF_CONFIG[position.classification as keyof typeof CLF_CONFIG];
-  const cfgColor = cfg?.color ?? "#ef4444";
+  const cfgColor = cfg?.color ?? "var(--clr-blunder)";
   const cfgBadge = cfg?.badge ?? "?";
   const boardOrientation = position.color.toLowerCase() as "white" | "black";
   const showExpl = solveState === "correct" || solveState === "shown";
@@ -618,7 +618,7 @@ export function StudyPuzzleModal({
                 <div
                   style={{
                     fontSize: 11, fontWeight: 800, textTransform: "uppercase",
-                    letterSpacing: "0.08em", color: "#ef4444", marginBottom: 8,
+                    letterSpacing: "0.08em", color: "var(--clr-blunder)", marginBottom: 8,
                   }}
                 >
                   Not quite
@@ -640,8 +640,8 @@ export function StudyPuzzleModal({
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ color: "#4ade80", fontSize: 18 }}>✓</span>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: "#4ade80" }}>
+                  <span style={{ color: "var(--accent-green)", fontSize: 18 }}>✓</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "var(--accent-green)" }}>
                     Correct! You found the best move.
                   </span>
                 </div>
@@ -746,7 +746,7 @@ export function StudyPuzzleModal({
                       <div
                         style={{
                           fontSize: 11, fontWeight: 800, textTransform: "uppercase",
-                          letterSpacing: "0.1em", color: "#ef4444", marginBottom: 8,
+                          letterSpacing: "0.1em", color: "var(--clr-blunder)", marginBottom: 8,
                           fontFamily: "var(--font-mono)",
                         }}
                       >
@@ -768,7 +768,7 @@ export function StudyPuzzleModal({
                       <div
                         style={{
                           fontSize: 11, fontWeight: 800, textTransform: "uppercase",
-                          letterSpacing: "0.1em", color: "#4ade80", marginBottom: 8,
+                          letterSpacing: "0.1em", color: "var(--accent-green)", marginBottom: 8,
                           fontFamily: "var(--font-mono)",
                         }}
                       >
@@ -783,15 +783,15 @@ export function StudyPuzzleModal({
                     {explanation.reasoning_feedback && (
                       <div
                         style={{
-                          background: "rgba(234,179,8,0.05)",
-                          border: "1px solid rgba(234,179,8,0.2)",
+                          background: "var(--gold-subtle)",
+                          border: "1px solid var(--gold-border)",
                           borderRadius: 12, padding: "14px 16px",
                         }}
                       >
                         <div
                           style={{
                             fontSize: 11, fontWeight: 800, textTransform: "uppercase",
-                            letterSpacing: "0.1em", color: "#eab308", marginBottom: 8,
+                            letterSpacing: "0.1em", color: "var(--gold)", marginBottom: 8,
                             fontFamily: "var(--font-mono)",
                           }}
                         >
@@ -1316,7 +1316,7 @@ export function StudyPanel({
               >
                 <div
                   style={{
-                    fontSize: 10, fontWeight: 800, color: "#4ade80",
+                    fontSize: 10, fontWeight: 800, color: "var(--accent-green)",
                     textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 5,
                   }}
                 >
@@ -1343,7 +1343,7 @@ export function StudyPanel({
               >
                 <div
                   style={{
-                    fontSize: 10, fontWeight: 800, color: "#ef4444",
+                    fontSize: 10, fontWeight: 800, color: "var(--clr-blunder)",
                     textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 5,
                   }}
                 >
@@ -1394,7 +1394,7 @@ export function StudyPanel({
           {!analyzing && studyPositions.length === 0 && movesData.length > 0 && (
             <div
               style={{
-                color: "#4ade80", fontSize: 13,
+                color: "var(--accent-green)", fontSize: 13,
                 padding: "14px 0", textAlign: "center",
               }}
             >
@@ -1413,7 +1413,7 @@ export function StudyPanel({
                     style={{
                       background: "var(--bg-elevated)",
                       border: "1px solid var(--border)",
-                      borderLeft: `3px solid ${c?.color ?? "#ef4444"}`,
+                      borderLeft: `3px solid ${c?.color ?? "var(--clr-blunder)"}`,
                       borderRadius: 10, padding: "10px 14px",
                       display: "flex", alignItems: "center", gap: 10,
                     }}
@@ -1427,7 +1427,7 @@ export function StudyPanel({
                       >
                         <span
                           style={{
-                            color: c?.color ?? "#ef4444",
+                            color: c?.color ?? "var(--clr-blunder)",
                             fontSize: 11, fontWeight: 800,
                           }}
                         >
@@ -1473,12 +1473,12 @@ export function StudyPanel({
                             color: "var(--text-secondary)",
                           }}
                         >
-                          <span style={{ color: c?.color ?? "#ef4444" }}>{pos.san}</span>
+                          <span style={{ color: c?.color ?? "var(--clr-blunder)" }}>{pos.san}</span>
                           <span style={{ color: "var(--text-muted)", margin: "0 4px" }}>→</span>
                           <span style={{ color: "var(--clr-best)" }}>{pos.best}</span>
                           <span
                             style={{
-                              color: c?.color ?? "#ef4444",
+                              color: c?.color ?? "var(--clr-blunder)",
                               fontSize: 10, marginLeft: 8,
                             }}
                           >
@@ -1546,7 +1546,7 @@ export function StudyPanel({
             <div
               style={{
                 fontSize: 11, fontWeight: 800, textTransform: "uppercase",
-                letterSpacing: "0.1em", color: "#f59e0b", marginBottom: 10,
+                letterSpacing: "0.1em", color: "var(--accent-amber)", marginBottom: 10,
               }}
             >
               What to Study Next
@@ -1554,7 +1554,7 @@ export function StudyPanel({
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {report.study_plan.items.slice(0, 3).map((item, i) => (
                 <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                  <span style={{ color: "#f59e0b", fontSize: 11, marginTop: 2, flexShrink: 0 }}>▸</span>
+                  <span style={{ color: "var(--accent-amber)", fontSize: 11, marginTop: 2, flexShrink: 0 }}>▸</span>
                   <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.55 }}>
                     {item.type === "book" && (
                       <>

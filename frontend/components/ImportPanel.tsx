@@ -427,7 +427,7 @@ function KidModeToggle({ value, onChange }: { value: boolean; onChange: (v: bool
       style={{
         background: value ? "rgba(251,191,36,0.08)" : "var(--bg-elevated)",
         border: `1px solid ${value ? "rgba(251,191,36,0.3)" : "var(--border)"}`,
-        color: value ? "#fbbf24" : "var(--text-muted)",
+        color: value ? "var(--clr-inaccuracy)" : "var(--text-muted)",
         borderRadius: 8, padding: "9px 14px", fontSize: 13, fontWeight: 500,
         width: "100%", textAlign: "left", cursor: "pointer", transition: "all 0.2s",
       }}
