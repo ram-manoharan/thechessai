@@ -209,6 +209,148 @@ export function streamAnalysis(
   return () => ctrl.abort();
 }
 
+// ── Job-queue-backed analysis (replaces streamAnalysis as the primary path) ──
+//
+// The backend now offloads full-game analysis to a worker process (RQ job
+// queue -- see backend/jobs.py) instead of running it inline on the request
+// that's serving this page. pollAnalysis() has the EXACT SAME call signature
+// as streamAnalysis() above -- same callbacks, same "returns a cleanup fn"
+// contract -- so it's a drop-in swap at the call site; only the transport
+// (poll instead of SSE) changes.
+//
+// Deliberately falls back to streamAnalysis() (the old, still-fully-
+// supported synchronous path) rather than failing outright if: the enqueue
+// call itself fails, or nothing has picked the job up after a while (most
+// likely cause: no worker process is actually running). Once real progress
+// has been shown to the user (moves_ready), a later poll hiccup degrades
+// gracefully instead of restarting the whole analysis from scratch.
+
+type JobStatusBody = {
+  status: string;
+  moves_ready: boolean;
+  metadata?: GameMetadata | null;
+  positions?: string[] | null;
+  opening?: Opening | null;
+  moves_data?: MoveData[] | null;
+  estimated_elo?: number | null;
+  ai_report?: string | null;
+  kid_commentaries?: Record<number, KidMoveCommentary> | null;
+};
+
+async function enqueueGameAnalysis(pgn: string, playerColor: "white" | "black", kidMode: boolean): Promise<{ job_id: string }> {
+  const res = await fetch(`${BASE}/api/analysis/game/enqueue`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pgn, player_color: playerColor, ai_report: true, kid_mode: kidMode }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+/** Never throws for a clean HTTP error response (a genuinely failed job) --
+ * that's a real, final outcome, distinct from a transient network failure,
+ * so it's returned as a tagged value instead. Only throws if the request
+ * itself couldn't complete at all. */
+async function getGameAnalysisStatus(jobId: string): Promise<JobStatusBody | { failed: true; detail: string }> {
+  const res  = await fetch(`${BASE}/api/analysis/game/status/${jobId}`);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) return { failed: true, detail: body.detail ?? `HTTP ${res.status}` };
+  return body as JobStatusBody;
+}
+
+const POLL_INTERVAL_MS = 1200;
+// If nothing has even started after this long, assume no worker process is
+// running rather than leaving the user staring at a spinner indefinitely.
+const NO_PROGRESS_FALLBACK_MS = 15000;
+const MAX_CONSECUTIVE_POLL_ERRORS = 3;
+
+export function pollAnalysis(
+  pgn: string,
+  playerColor: "white" | "black",
+  onMoves: (r: Omit<AnalysisResult, "ai_report">) => void,
+  onReport: (text: string) => void,
+  onDone: () => void,
+  onError: (msg: string) => void,
+  kidMode = false,
+  onKidCommentaries?: (data: Record<number, KidMoveCommentary>) => void,
+) {
+  let cancelled = false;
+  let fellBackCleanup: (() => void) | null = null;
+  let movesDelivered = false;
+  let consecutivePollErrors = 0;
+  const startedAt = Date.now();
+
+  const stop = () => {
+    cancelled = true;
+    fellBackCleanup?.();
+  };
+
+  const fallBackToStream = () => {
+    if (cancelled) return;
+    fellBackCleanup = streamAnalysis(pgn, playerColor, onMoves, onReport, onDone, onError, kidMode, onKidCommentaries);
+  };
+
+  const deliverMoves = (body: JobStatusBody) => {
+    movesDelivered = true;
+    onMoves({
+      metadata:      body.metadata ?? {},
+      positions:     body.positions ?? [],
+      opening:       body.opening ?? { name: "", eco: "" },
+      moves_data:    body.moves_data ?? [],
+      estimated_elo: body.estimated_elo ?? null,
+    });
+  };
+
+  (async () => {
+    let jobId: string;
+    try {
+      ({ job_id: jobId } = await enqueueGameAnalysis(pgn, playerColor, kidMode));
+    } catch {
+      fallBackToStream();
+      return;
+    }
+
+    while (!cancelled) {
+      await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+      if (cancelled) return;
+
+      let result: JobStatusBody | { failed: true; detail: string } | null;
+      try {
+        result = await getGameAnalysisStatus(jobId);
+      } catch {
+        result = null; // transient network failure -- distinct from a real job failure below
+      }
+
+      if (result === null) {
+        consecutivePollErrors++;
+        if (!movesDelivered && consecutivePollErrors >= MAX_CONSECUTIVE_POLL_ERRORS) { fallBackToStream(); return; }
+        if (movesDelivered && consecutivePollErrors >= MAX_CONSECUTIVE_POLL_ERRORS * 2) { onDone(); return; } // already showing real results -- don't alarm the user over a flaky final poll
+        continue;
+      }
+      consecutivePollErrors = 0;
+
+      if ("failed" in result) { onError(result.detail); return; } // the job itself genuinely failed -- final, not retryable
+
+      if (!movesDelivered && !result.moves_ready && Date.now() - startedAt > NO_PROGRESS_FALLBACK_MS) {
+        fallBackToStream();
+        return;
+      }
+
+      if (result.moves_ready && !movesDelivered) deliverMoves(result);
+
+      if (result.status === "finished") {
+        if (!movesDelivered) deliverMoves(result); // defensive; finished should always imply moves_ready
+        if (result.ai_report) onReport(result.ai_report);
+        if (result.kid_commentaries && onKidCommentaries) onKidCommentaries(result.kid_commentaries);
+        onDone();
+        return;
+      }
+    }
+  })();
+
+  return stop;
+}
+
 // ── Puzzles & Annotated PGN ──────────────────────────────────────────────────
 
 export interface PuzzleStats {

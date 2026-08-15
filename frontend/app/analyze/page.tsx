@@ -18,7 +18,7 @@ import { StudyPanel } from "@/components/GameStudy";
 import { ReplayModal } from "@/components/ReplayModal";
 import { useGameStore } from "@/lib/store";
 import {
-  streamAnalysis, fetchAnnotatedPgn, downloadAnnotatedPgn, explainPosition, fetchPositionPeers,
+  pollAnalysis, fetchAnnotatedPgn, downloadAnnotatedPgn, explainPosition, fetchPositionPeers,
   saveAnalyzedGame, getAnalyzedGame, fetchPuzzles,
 } from "@/lib/api";
 import type { TopMove, PeerStats } from "@/lib/api";
@@ -615,7 +615,7 @@ function AnalyzePageContent() {
     setAnalyzing(true);
     setError(null);
 
-    stopRef.current = streamAnalysis(
+    stopRef.current = pollAnalysis(
       pgn,
       playerColor,
       (r) => {

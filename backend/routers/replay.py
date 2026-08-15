@@ -42,6 +42,18 @@ router = APIRouter()
 MAX_DEVIATION_PROB = 0.65
 _DEVIATION_DEPTH = 10  # shallow/fast -- this only needs "plausible", not exact
 
+# Both Stockfish calls below share the same engine pool as full-game
+# analysis -- there's no separate Maia-only pool to fall back to yet (that's
+# a real infra addition, tracked as a later scale item, not a Phase 0 one).
+# What Phase 0 CAN do cheaply: both calls are already best-effort by design
+# (eval_cp is a nice-to-have overlay, the deviation search falls back to
+# Maia's own move on any failure) -- they just didn't act like it timing-wise,
+# using the same ~25s default acquire timeout as someone waiting on a full
+# game analysis. A short, dedicated timeout here means a busy analysis queue
+# degrades a replay move to "fast, no eval overlay" instead of "wait behind
+# whatever full-game analysis is already holding the engine."
+_REPLAY_ACQUIRE_TIMEOUT_SECONDS = 3.0
+
 
 class ReplayMoveRequest(BaseModel):
     fen: str
@@ -72,7 +84,7 @@ def _evaluate(board: chess.Board) -> Optional[int]:
     if board.is_game_over():
         return None
     try:
-        with engine_pool.acquire(kind="interactive") as sf:
+        with engine_pool.acquire(kind="interactive", timeout=_REPLAY_ACQUIRE_TIMEOUT_SECONDS) as sf:
             lines = engine_pool.cached_analyse(sf, board, depth=_DEVIATION_DEPTH, multi_pv=1)
         if lines:
             return lines[0]["score"].white().score(mate_score=10000)
@@ -87,7 +99,7 @@ def _find_deviation(board: chess.Board, maia_move: chess.Move) -> Optional[chess
     on any failure -- the fingerprint layer is a refinement, never a
     dependency the whole endpoint should fail over."""
     try:
-        with engine_pool.acquire(kind="interactive") as sf:
+        with engine_pool.acquire(kind="interactive", timeout=_REPLAY_ACQUIRE_TIMEOUT_SECONDS) as sf:
             lines = engine_pool.cached_analyse(sf, board, depth=_DEVIATION_DEPTH, multi_pv=3)
     except Exception:
         logger.warning("Fingerprint deviation lookup failed; falling back to Maia.", exc_info=True)

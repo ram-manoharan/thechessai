@@ -30,8 +30,11 @@ async def get_pool() -> asyncpg.Pool:
             # several analysis requests run genuinely concurrently instead of
             # queueing one at a time, so more requests can be mid-flight and
             # touching the DB (mistake_pattern/analyzed_game writes, profile
-            # cache reads) at once. Cheap to raise: these are pooled via
-            # PgBouncer already, and idle connections cost little.
+            # cache reads) at once. Cheap to raise as long as DATABASE_URL is
+            # actually the pooled connection string (render.yaml's
+            # `connectionPool: pgbouncer` + `connectionPoolString` property)
+            # rather than a direct one -- verify that's live before assuming
+            # idle connections here are free.
             max_size=20,
             command_timeout=10,
         )

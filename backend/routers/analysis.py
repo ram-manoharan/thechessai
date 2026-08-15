@@ -207,6 +207,91 @@ def analyze_game_stream(req: AnalyzeRequest):
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
+# ── Job-queue-backed analysis (Phase 1 of the scale roadmap) ────────────────
+#
+# /game and /game/stream above are UNCHANGED and still fully supported --
+# both run the analysis inline on whichever thread FastAPI's threadpool
+# handed the request, for however long that takes. These two new endpoints
+# instead enqueue the same work (jobs.run_full_game_analysis) onto an RQ
+# queue and return almost immediately; a separate worker process (worker.py)
+# does the actual Stockfish/AI work. Scaling analysis capacity is now "run
+# more worker.py processes" -- fully decoupled from how many web replicas
+# are running, and no web-tier thread/connection is held for the whole
+# analysis duration.
+#
+# Response shapes deliberately mirror /game's (metadata, positions, opening,
+# moves_data, ai_report, estimated_elo) so the frontend's existing parsing
+# logic for that shape needs no rewrite -- only the transport changes (poll
+# instead of stream).
+
+class JobStatusResponse(BaseModel):
+    status: str  # "queued" | "started" | "finished" | "failed"
+    # Present once Stockfish analysis finishes, even before the (often
+    # slower) AI report -- lets the frontend render the board/move list
+    # without waiting on the whole job, the same two-stage reveal
+    # /game/stream gave via SSE, just polled instead of pushed.
+    moves_ready: bool = False
+    metadata: Optional[dict] = None
+    positions: Optional[list] = None
+    opening: Optional[dict] = None
+    moves_data: Optional[list] = None
+    estimated_elo: Optional[int] = None
+    ai_report: Optional[str] = None
+    kid_commentaries: Optional[list] = None
+    error: Optional[str] = None
+
+
+@router.post("/game/enqueue")
+def enqueue_game_analysis(req: AnalyzeRequest):
+    import jobs
+    try:
+        job = jobs.enqueue_game_analysis(req.pgn, req.player_color, req.ai_report, req.kid_mode)
+    except Exception as e:
+        raise HTTPException(503, f"Could not queue analysis job: {e}")
+    return {"job_id": job.id}
+
+
+@router.get("/game/status/{job_id}", response_model=JobStatusResponse)
+def get_game_analysis_status(job_id: str):
+    import jobs
+    from rq.job import JobStatus
+
+    job = jobs.get_job(job_id)
+    if job is None:
+        raise HTTPException(404, "No analysis job found with that id (it may have expired).")
+
+    rq_status = job.get_status(refresh=True)
+
+    if rq_status == JobStatus.FAILED:
+        exc_info = job.exc_info or ""
+        # Mirrors /game's existing 422 vs 500 split for the same failure
+        # mode -- AnalysisNoMovesError is raised for a syntactically valid
+        # PGN with nothing to analyse, everything else is a genuine failure.
+        if "AnalysisNoMovesError" in exc_info:
+            raise HTTPException(422, "This game has no moves to analyse. Please select a game that was actually played.")
+        logger.error("Analysis job %s failed: %s", job_id, exc_info)
+        raise HTTPException(500, "Analysis failed. Please try again.")
+
+    if rq_status == JobStatus.FINISHED:
+        result = job.result or {}
+        return JobStatusResponse(status="finished", moves_ready=True, **result)
+
+    # QUEUED / STARTED / DEFERRED / SCHEDULED -- report whatever partial
+    # progress the job has published to its own meta so far (see
+    # jobs.run_full_game_analysis's _set_meta calls).
+    meta = job.meta or {}
+    moves_ready = meta.get("stage") == "moves_ready"
+    return JobStatusResponse(
+        status=str(rq_status),
+        moves_ready=moves_ready,
+        metadata=meta.get("metadata"),
+        positions=meta.get("positions"),
+        opening=meta.get("opening"),
+        moves_data=meta.get("moves_data"),
+        estimated_elo=meta.get("estimated_elo"),
+    )
+
+
 @router.post("/position")
 def analyze_position(req: PositionRequest):
     try:

@@ -316,11 +316,23 @@ def _serialize(result: list) -> dict:
     lines = []
     for info in result:
         pv = info.get("pv") or []
-        if not pv:
-            continue
         sc = info.get("score")
         cp = sc.white().score(mate_score=10000) if sc else None
-        lines.append({"uci": pv[0].uci(), "score_cp": cp, "pv_uci": [m.uci() for m in pv[:6]]})
+        # A position with no legal moves (checkmate/stalemate) legitimately
+        # has an empty/None pv from the engine, but still carries a real
+        # score (Mate(0) from the mated side's POV) that's worth keeping --
+        # dropping the whole line here (as this used to) throws that score
+        # away on every cache HIT for such a position (the first, uncached,
+        # caller still saw it fine, straight off the raw engine result;
+        # only reads from the cache afterward lost it). Only skip a line
+        # that has neither a move nor a score to offer.
+        if not pv and cp is None:
+            continue
+        lines.append({
+            "uci":     pv[0].uci() if pv else None,
+            "score_cp": cp,
+            "pv_uci":  [m.uci() for m in pv[:6]],
+        })
     return {"lines": lines}
 
 

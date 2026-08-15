@@ -4,7 +4,9 @@ import math
 import platform
 import shutil
 import logging
+import threading
 import traceback
+import concurrent.futures
 from typing import Dict, Any, List, Optional
 from io import StringIO
 import chess
@@ -539,7 +541,6 @@ class StockfishService:
                 return []
 
             board = game.board()
-            moves_data = []
 
             # Materialise mainline once — avoids a second PGN parse just to count moves
             mainline    = list(game.mainline())
@@ -550,10 +551,8 @@ class StockfishService:
             # for arrows and the eval strip.  The engine returns a list of InfoDicts
             # ordered from best to worst PV.  We always use pv_list[0] for the
             # pipeline (same score as multipv=1) so move classification is unchanged.
-            # Engine calls: N+1 for N half-moves (same as before — no extra calls);
-            # each goes through engine_pool.cached_analyse, so repeated positions
-            # (openings especially, shared across many games/users) skip the
-            # engine entirely on a cache hit.
+            # There are still N+1 engine calls for N half-moves -- what changes
+            # below is WHEN they run, not how many or what they compute.
             _MULTI_PV   = 3
 
             def _score(pv: list) -> Optional[int]:
@@ -566,99 +565,166 @@ class StockfishService:
                     return None
                 return sc.white().score(mate_score=10000)
 
-            # One engine held for the whole game (same pattern as the old
-            # singleton — reused across all N+1 calls) drawn from the shared
-            # pool instead of a fixed one, so multiple games can each hold
-            # their own engine and run in true parallel.
-            with engine_pool.acquire("interactive") as engine:
-                def _analyse(b: chess.Board):
-                    return engine_pool.cached_analyse(engine, b, depth, _MULTI_PV)
+            # ── Precompute every position's FEN with a free (engine-less) board
+            # walk ─────────────────────────────────────────────────────────────
+            # The full move sequence is already known from `mainline`, so every
+            # position this analysis will ever need -- boards[i] = position after
+            # i half-moves, boards[0] = the start position -- can be derived
+            # without touching an engine. That turns the N+1 analyse() calls
+            # from a hard sequential dependency (each needs the previous move
+            # applied) into N+1 INDEPENDENT (fen, depth) lookups.
+            boards: List[chess.Board] = [board.copy()]
+            _walk = board.copy()
+            for node in mainline:
+                _walk.push(node.move)
+                boards.append(_walk.copy())
 
-                pv_list      = _analyse(board)
-                score_before = _score(pv_list)
+            # ── Fan the independent lookups out across the engine pool, in
+            # CONTIGUOUS CHUNKS rather than one-position-at-a-time round-robin
+            # ────────────────────────────────────────────────────────────────
+            # One engine held for a whole game (the old behaviour) let that
+            # engine's transposition table accumulate across every position in
+            # order -- neighbouring positions in the same game very often
+            # transpose into shared sub-trees, so a warm hash table can nudge
+            # search pruning (aspiration windows, LMR, etc.) and shift the
+            # eval by a few centipawns even at the "same" nominal depth. Handing
+            # positions out one-by-one to whichever engine is next free would
+            # scatter every position across a cold, unrelated hash table each
+            # time -- technically still a valid depth-12 analysis, but a
+            # measurably different one, occasionally flipping a move's
+            # classification right at a threshold boundary. Verified this by
+            # diffing full before/after output at POOL_SIZE=4: identical move-
+            # for-move at POOL_SIZE=1 (only one engine ever exists, so nothing
+            # changes), but real drift at POOL_SIZE>1 with per-position
+            # round-robin.
+            #
+            # Splitting into `workers` CONTIGUOUS chunks instead -- one engine
+            # holds its whole chunk and walks it in original order, same as
+            # the old per-game pattern just scoped smaller -- keeps that local
+            # hash continuity within each chunk (which is where almost all the
+            # relevant transpositions live) while still parallelising across
+            # chunks for the real wall-clock win. Doesn't reproduce the old
+            # single-engine run bit-for-bit once POOL_SIZE > 1 (impossible
+            # without giving up genuine parallelism -- any multi-process
+            # engine parallelism has this property, the same way a differently
+            # -threaded Stockfish run isn't bit-identical to a single-threaded
+            # one), but it's the closest practical approximation, and at
+            # today's actual POOL_SIZE=1 default this is still exactly the old
+            # behaviour, proven identical.
+            workers = max(1, min(engine_pool.POOL_SIZE, len(boards)))
+            chunk_size = -(-len(boards) // workers)  # ceil division
+            chunks = [
+                list(range(start, min(start + chunk_size, len(boards))))
+                for start in range(0, len(boards), chunk_size)
+            ]
 
-                for move_num, node in enumerate(mainline, start=1):
-                    if progress_callback and total_moves:
-                        progress_callback(move_num, total_moves)
+            results: List[Optional[list]] = [None] * len(boards)
+            done = 0
+            progress_lock = threading.Lock()
 
-                    move     = node.move
-                    san      = board.san(move)
-                    is_white = (board.turn == chess.WHITE)  # capture BEFORE push
-                    comment  = getattr(node, 'comment', '') or ''
-                    clock_remaining = _parse_clock(comment)
-                    full_move_num   = (move_num + 1) // 2
+            def _analyse_chunk(indices: List[int]) -> None:
+                nonlocal done
+                with engine_pool.acquire("interactive") as engine:
+                    for i in indices:
+                        results[i] = engine_pool.cached_analyse(engine, boards[i], depth, _MULTI_PV)
+                        if progress_callback:
+                            with progress_lock:
+                                done += 1
+                                current = done
+                            progress_callback(current, len(boards))
 
-                    # ── Top-3 best moves from the pre-move position ──────────────
-                    top_moves = []
-                    for pv_info in pv_list[:_MULTI_PV]:
-                        if not pv_info.get("pv"):
-                            continue
-                        pv_moves = pv_info["pv"]
-                        bm       = pv_moves[0]
-                        sc_info  = pv_info.get("score")
-                        bm_score = sc_info.white().score(mate_score=10000) if sc_info else 0
-                        # Build continuation: walk the PV after the best move
-                        continuation: List[str] = []
-                        try:
-                            tmp = board.copy()
-                            tmp.push(bm)
-                            for pv_mv in pv_moves[1:6]:
-                                continuation.append(tmp.san(pv_mv))
-                                tmp.push(pv_mv)
-                        except Exception:
-                            pass
-                        top_moves.append({
-                            "san":          board.san(bm),
-                            "uci":          bm.uci(),
-                            "score_cp":     bm_score,
-                            "continuation": continuation,
-                        })
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(chunks)) as ex:
+                list(ex.map(_analyse_chunk, chunks))
 
-                    best_move_san = top_moves[0]["san"] if top_moves else "N/A"
-                    best_move_uci = top_moves[0]["uci"] if top_moves else ""
+            # ── Sequential bookkeeping pass -- identical logic to before, just
+            # reading precomputed results[i] instead of calling the engine
+            # inline. `board` here is a pure notation/material walk (SAN,
+            # phase-by-material, practical-move FEN) -- no engine calls in
+            # this loop at all. ──────────────────────────────────────────────
+            moves_data = []
+            score_before = _score(results[0])
 
-                    # Human-playable vs. computer-only labeling (Analyze tab USP —
-                    # see ANALYSIS_STRATEGY.md section 6): cheap, no extra engine calls.
-                    fen_before_move = board.fen()
-                    practical_map = is_practical_move(fen_before_move, top_moves)
-                    for tm in top_moves:
-                        tm["practical"] = practical_map.get(tm["uci"], True)
+            for move_num, node in enumerate(mainline, start=1):
+                pv_list = results[move_num - 1]  # position BEFORE this move
 
-                    board.push(move)
+                move     = node.move
+                san      = board.san(move)
+                is_white = (board.turn == chess.WHITE)  # capture BEFORE push
+                comment  = getattr(node, 'comment', '') or ''
+                clock_remaining = _parse_clock(comment)
+                full_move_num   = (move_num + 1) // 2
 
-                    # One engine call per half-move; result reused as baseline next iteration.
-                    pv_list     = _analyse(board)
-                    score_after = _score(pv_list)
-
-                    if score_before is not None and score_after is not None:
-                        classification, cp_loss, accuracy_score = _classify_move(
-                            score_before, score_after, is_white
-                        )
-                    else:
-                        classification = "Best"
-                        cp_loss        = 0
-                        accuracy_score = 100.0
-
-                    moves_data.append({
-                        "move_number":      full_move_num,
-                        "color":            "White" if is_white else "Black",
-                        "move_san":         san,
-                        "best_move_san":    best_move_san,
-                        "best_move_uci":    best_move_uci,
-                        "top_moves":        top_moves,
-                        "score_before":     score_before,
-                        "score_after":      score_after,
-                        "cp_loss":          cp_loss,
-                        "classification":   classification,
-                        "accuracy_score":   accuracy_score,
-                        "clock_remaining":  clock_remaining,
-                        "phase":            _get_phase_by_material(board, full_move_num),
+                # ── Top-3 best moves from the pre-move position ──────────────
+                top_moves = []
+                for pv_info in pv_list[:_MULTI_PV]:
+                    if not pv_info.get("pv"):
+                        continue
+                    pv_moves = pv_info["pv"]
+                    bm       = pv_moves[0]
+                    sc_info  = pv_info.get("score")
+                    bm_score = sc_info.white().score(mate_score=10000) if sc_info else 0
+                    # Build continuation: walk the PV after the best move
+                    continuation: List[str] = []
+                    try:
+                        tmp = board.copy()
+                        tmp.push(bm)
+                        for pv_mv in pv_moves[1:6]:
+                            continuation.append(tmp.san(pv_mv))
+                            tmp.push(pv_mv)
+                    except Exception:
+                        pass
+                    top_moves.append({
+                        "san":          board.san(bm),
+                        "uci":          bm.uci(),
+                        "score_cp":     bm_score,
+                        "continuation": continuation,
                     })
 
-                    # Pipeline: carry this position's analysis forward as next baseline
-                    score_before = score_after
+                best_move_san = top_moves[0]["san"] if top_moves else "N/A"
+                best_move_uci = top_moves[0]["uci"] if top_moves else ""
 
-                return moves_data
+                # Human-playable vs. computer-only labeling (Analyze tab USP —
+                # see ANALYSIS_STRATEGY.md section 6): cheap, no extra engine calls.
+                fen_before_move = board.fen()
+                practical_map = is_practical_move(fen_before_move, top_moves)
+                for tm in top_moves:
+                    tm["practical"] = practical_map.get(tm["uci"], True)
+
+                board.push(move)
+
+                # Position AFTER this move -- precomputed, not a fresh engine call.
+                pv_list     = results[move_num]
+                score_after = _score(pv_list)
+
+                if score_before is not None and score_after is not None:
+                    classification, cp_loss, accuracy_score = _classify_move(
+                        score_before, score_after, is_white
+                    )
+                else:
+                    classification = "Best"
+                    cp_loss        = 0
+                    accuracy_score = 100.0
+
+                moves_data.append({
+                    "move_number":      full_move_num,
+                    "color":            "White" if is_white else "Black",
+                    "move_san":         san,
+                    "best_move_san":    best_move_san,
+                    "best_move_uci":    best_move_uci,
+                    "top_moves":        top_moves,
+                    "score_before":     score_before,
+                    "score_after":      score_after,
+                    "cp_loss":          cp_loss,
+                    "classification":   classification,
+                    "accuracy_score":   accuracy_score,
+                    "clock_remaining":  clock_remaining,
+                    "phase":            _get_phase_by_material(board, full_move_num),
+                })
+
+                # Pipeline: carry this position's analysis forward as next baseline
+                score_before = score_after
+
+            return moves_data
         except chess.engine.EngineTerminatedError:
             raise RuntimeError("Stockfish engine crashed during analysis. Please try again.")
         except Exception as e:

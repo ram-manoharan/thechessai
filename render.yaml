@@ -12,6 +12,14 @@ databases:
     plan: basic-256mb
     region: oregon
     postgresMajorVersion: "16"
+    # Render-managed PgBouncer in front of this database -- db.py's pool
+    # (asyncpg, max_size=20) previously connected DIRECTLY to Postgres
+    # despite a comment claiming it was "already pooled via PgBouncer" (it
+    # wasn't -- no PgBouncer existed anywhere in this file). This closes
+    # that gap for free, no self-hosted PgBouncer service needed. Enabling
+    # this restarts the database on the next Blueprint sync -- expect a
+    # brief connection blip then, not silently.
+    connectionPool: pgbouncer
 
 services:
   - type: redis
@@ -26,26 +34,48 @@ services:
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
     region: oregon
-    # Now on "standard" (1 vCPU / 2GB), up from "starter" (0.5 vCPU / 512MB).
-    # STOCKFISH_POOL_SIZE should match actual vCPU count -- on a single real
-    # core, running 2+ concurrent Stockfish processes doesn't give true
-    # parallelism (they'd just contend for the same core), so leave it at
-    # the default of 1 here. The extra RAM still helps: bump
-    # STOCKFISH_HASH_MB (dashboard env var below) for a bigger transposition
-    # table on that one engine -- faster/better search at the same depth,
-    # no extra cores needed. Only raise STOCKFISH_POOL_SIZE above 1 if this
-    # plan is upgraded again to 2+ vCPU -- see backend/engine_pool.py's
-    # docstring for what each var controls.
-    # Changing `plan:` here and re-syncing the Blueprint resizes the LIVE
-    # service (real cost change) -- do that deliberately, not as a side
-    # effect of a code deploy.
+    # UNRESOLVED as of this file: this comment previously claimed the live
+    # service was manually bumped to "standard" (1 vCPU/2GB) in the Render
+    # dashboard without updating `plan:` below to match -- but `plan:`
+    # literally still says "starter" (0.5 vCPU/512MB, shared/burstable), and
+    # nothing in this repo can confirm which one is actually live. Check the
+    # dashboard's current plan before touching this field: if it says
+    # "starter", either upgrade there (then set `plan: standard` here to
+    # match) or leave both alone -- do NOT just change `plan:` here to
+    # "standard" without confirming, since re-syncing this Blueprint applies
+    # whatever `plan:` says and RESIZES the live service (real cost change,
+    # brief restart) even if the dashboard was actually already on a
+    # different plan than this comment assumed.
+    #
+    # STOCKFISH_POOL_SIZE / MAIA_POOL_SIZE (dashboard env vars below) should
+    # match real vCPU count once that's confirmed -- on a single real core,
+    # running 2+ concurrent engine processes of either kind doesn't give
+    # true parallelism (they'd just contend for the same core). On 0.5 vCPU
+    # (starter), leave both at their default of 1. The extra RAM on standard
+    # still helps even at pool size 1: bump STOCKFISH_HASH_MB for a bigger
+    # transposition table -- faster search at the same depth, no extra
+    # cores needed. See backend/engine_pool.py and backend/human_engine_pool.py
+    # for what each var controls.
     plan: starter
     healthCheckPath: /api/health
+    # Now that /api/analysis/game/enqueue + /game/status hand the actual
+    # engine/AI work off to the worker fleet below, this tier is safe to
+    # replicate -- it's no longer holding a thread + SSE connection open for
+    # the length of a full analysis on the new path (the old /game/stream
+    # still does, on whichever replica handles it, but that's now a
+    # fallback path, not the primary one). Same cost-change caveat as
+    # `plan:` above: this is a real, billed instance count, raise it
+    # deliberately.
+    numInstances: 2
     envVars:
       - key: DATABASE_URL
         fromDatabase:
           name: chessai-db
-          property: connectionString
+          # connectionPoolString (not connectionString) -- routes through
+          # the connectionPool: pgbouncer above instead of connecting to
+          # Postgres directly. Depends on that field actually taking effect
+          # on next sync -- verify in the dashboard after deploying.
+          property: connectionPoolString
       - key: REDIS_URL
         fromService:
           type: redis
@@ -72,6 +102,60 @@ services:
       # RAM for the one engine's transposition table, real speed win with no
       # extra cores needed. Leave STOCKFISH_POOL_SIZE unset (defaults to 1) —
       # only raise it to match vCPU count if this plan is upgraded to 2+ vCPU.
+      - key: STOCKFISH_POOL_SIZE
+        sync: false
+      - key: STOCKFISH_HASH_MB
+        sync: false
+      # Maia/lc0 replay engine pool (backend/human_engine_pool.py) -- was
+      # entirely absent from this file before, meaning it silently defaulted
+      # to 1 with no dashboard visibility. Same sizing rule as
+      # STOCKFISH_POOL_SIZE: match real vCPU count, don't exceed it.
+      - key: MAIA_POOL_SIZE
+        sync: false
+
+  # Horizontal worker fleet for the job queue (backend/jobs.py + worker.py).
+  # This is the actual scale-out lever: analysis capacity = numInstances x
+  # STOCKFISH_POOL_SIZE per instance, and it scales independently of the web
+  # tier above -- add more of these under load without touching the web
+  # service at all. Each instance is a fully independent process pulling
+  # jobs off the same Redis queue; nothing here needs to know about the
+  # others.
+  - type: worker
+    name: chessai-worker
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    dockerCommand: python worker.py
+    region: oregon
+    # Standard (1 dedicated vCPU), not Starter (0.5 vCPU, shared/burstable)
+    # -- Standard is the best $/core on Render's lineup, and dedicated cores
+    # matter more here than on the web tier since every core is a full,
+    # sustained Stockfish search, not bursty request handling. Many small
+    # dedicated-core instances beat one big instance for a workload made of
+    # independent single-threaded engine processes.
+    plan: standard
+    # 2 to actually demonstrate horizontal scaling, not just stand up "a
+    # worker". Bump this as real concurrent-analysis traffic demands it --
+    # same real-cost-change caveat as everywhere else in this file: raise it
+    # deliberately, not as a side effect of an unrelated deploy.
+    numInstances: 2
+    envVars:
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: chessai-redis
+          property: connectionString
+      # Same AI-provider credentials as the web service above -- this is
+      # what actually writes each job's coaching report.
+      - key: AI_PROVIDER
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: TOGETHER_API_KEY
+        sync: false
+      # Per-instance Stockfish pool sizing -- same rule as the web service:
+      # match this plan's real vCPU count, don't exceed it. At Standard's 1
+      # dedicated vCPU, leave this at the default of 1.
       - key: STOCKFISH_POOL_SIZE
         sync: false
       - key: STOCKFISH_HASH_MB
