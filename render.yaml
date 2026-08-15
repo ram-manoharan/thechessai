@@ -34,29 +34,16 @@ services:
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
     region: oregon
-    # UNRESOLVED as of this file: this comment previously claimed the live
-    # service was manually bumped to "standard" (1 vCPU/2GB) in the Render
-    # dashboard without updating `plan:` below to match -- but `plan:`
-    # literally still says "starter" (0.5 vCPU/512MB, shared/burstable), and
-    # nothing in this repo can confirm which one is actually live. Check the
-    # dashboard's current plan before touching this field: if it says
-    # "starter", either upgrade there (then set `plan: standard` here to
-    # match) or leave both alone -- do NOT just change `plan:` here to
-    # "standard" without confirming, since re-syncing this Blueprint applies
-    # whatever `plan:` says and RESIZES the live service (real cost change,
-    # brief restart) even if the dashboard was actually already on a
-    # different plan than this comment assumed.
-    #
-    # STOCKFISH_POOL_SIZE / MAIA_POOL_SIZE (dashboard env vars below) should
-    # match real vCPU count once that's confirmed -- on a single real core,
-    # running 2+ concurrent engine processes of either kind doesn't give
-    # true parallelism (they'd just contend for the same core). On 0.5 vCPU
-    # (starter), leave both at their default of 1. The extra RAM on standard
-    # still helps even at pool size 1: bump STOCKFISH_HASH_MB for a bigger
-    # transposition table -- faster search at the same depth, no extra
-    # cores needed. See backend/engine_pool.py and backend/human_engine_pool.py
-    # for what each var controls.
-    plan: starter
+    # RESOLVED: confirmed live in the dashboard as Pro (2 dedicated vCPU /
+    # 4GB RAM), upgraded from Starter (0.5 vCPU / 512MB) -- `plan:` below
+    # now matches. This is what makes STOCKFISH_POOL_SIZE=2 (dashboard env
+    # var below) actually safe: 2 real cores means 2 concurrent Stockfish
+    # processes get true parallelism instead of contending for one core.
+    # This is also the first plan tier where chess_analysis.py's per-game
+    # chunked parallelization (see its own comments) actually does
+    # anything -- at pool size 1 it's a verified no-op, byte-identical to
+    # the old sequential behaviour.
+    plan: pro
     healthCheckPath: /api/health
     # Now that /api/analysis/game/enqueue + /game/status hand the actual
     # engine/AI work off to the worker fleet below, this tier is safe to
@@ -96,19 +83,22 @@ services:
         sync: false
       - key: LICHESS_EXPLORER_TOKEN
         sync: false
-      # Stockfish engine pool sizing (backend/engine_pool.py). On the current
-      # "standard" plan (1 vCPU/2GB), set STOCKFISH_HASH_MB=256 here — more
-      # RAM for the one engine's transposition table, real speed win with no
-      # extra cores needed. Leave STOCKFISH_POOL_SIZE unset (defaults to 1) —
-      # only raise it to match vCPU count if this plan is upgraded to 2+ vCPU.
+      # Stockfish engine pool sizing (backend/engine_pool.py). Now on Pro
+      # (2 dedicated vCPU / 4GB) -- set STOCKFISH_POOL_SIZE=2 in the
+      # dashboard to match (defaults to 1 if left unset, which would leave
+      # the 2nd core idle for this pool). STOCKFISH_HASH_MB=128 is a
+      # reasonable transposition-table size for 2 engines sharing 4GB
+      # alongside the rest of the process -- raise it if memory headroom
+      # allows, watch for OOM if it doesn't.
       - key: STOCKFISH_POOL_SIZE
         sync: false
       - key: STOCKFISH_HASH_MB
         sync: false
-      # Maia/lc0 replay engine pool (backend/human_engine_pool.py) -- was
-      # entirely absent from this file before, meaning it silently defaulted
-      # to 1 with no dashboard visibility. Same sizing rule as
-      # STOCKFISH_POOL_SIZE: match real vCPU count, don't exceed it.
+      # Maia/lc0 replay engine pool (backend/human_engine_pool.py). Left at
+      # its default of 1 even on 2 vCPU -- replay calls are individually
+      # light (a single lc0 forward pass), so both cores are better spent
+      # on Stockfish/report generation than split off for this. Revisit if
+      # replay traffic specifically becomes the bottleneck.
       - key: MAIA_POOL_SIZE
         sync: false
 
