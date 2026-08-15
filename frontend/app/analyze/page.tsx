@@ -140,6 +140,7 @@ function EngineLinesPanel() {
   const currentFen   = useGameStore(s => s.currentFen());
   const flipped      = useGameStore(s => s.flipped);
   const playerColor  = useGameStore(s => s.playerColor);
+  const metadata     = useGameStore(s => s.metadata);
   const [previewIdx, setPreviewIdx] = useState<number | null>(null);
   const [replayOpen, setReplayOpen] = useState(false);
 
@@ -155,6 +156,8 @@ function EngineLinesPanel() {
   const cfg     = move ? clfConfig(move.classification ?? "") : null;
   const playerColorWord: "White" | "Black" = playerColor === "white" ? "White" : "Black";
   const isOwnError = isError && move?.color === playerColorWord;
+  const opponentColorWord: "White" | "Black" = playerColorWord === "White" ? "Black" : "White";
+  const opponentName = (opponentColorWord === "White" ? metadata.White : metadata.Black) || "your opponent";
 
   // Resulting FEN after playing a line's best move + its continuation, for
   // the "Show Line" mini-board preview.
@@ -207,21 +210,25 @@ function EngineLinesPanel() {
       )}
 
       {/* "What if?" replay CTA — only on the player's own error moves, right
-          where their attention already is: the position they just blundered. */}
+          where their attention already is: the position they just blundered.
+          Pulses/glows so it reads as a live prompt to act, not just another
+          static info row next to the classification badge above it. */}
       {isOwnError && cfg && (
         <button
           onClick={() => setReplayOpen(true)}
+          className="replay-cta-pulse"
           style={{
             display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
-            background: "rgba(201,162,68,0.08)", border: "1px solid rgba(201,162,68,0.3)",
-            borderRadius: 10, padding: "9px 14px", cursor: "pointer", textAlign: "left",
+            background: "linear-gradient(90deg, rgba(201,162,68,0.14), rgba(201,162,68,0.06))",
+            border: "1.5px solid var(--gold-border)",
+            borderRadius: 10, padding: "11px 14px", cursor: "pointer", textAlign: "left",
             width: "100%",
           }}
         >
-          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>
-            {"🧪 What if you hadn't played this?"}
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--text-primary)" }}>
+            {"🧪 Face an AI version of "}{opponentName}{" — could you have avoided this?"}
           </span>
-          <span style={{ fontSize: 12, fontWeight: 700, color: "var(--gold)", flexShrink: 0 }}>
+          <span style={{ fontSize: 12.5, fontWeight: 800, color: "var(--gold)", flexShrink: 0 }}>
             {"Play it out →"}
           </span>
         </button>

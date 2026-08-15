@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef, useCallback, useMemo, useEffect } from "react";
+import { useState, useRef, useCallback, useMemo, useEffect, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
 import { Chess } from "chess.js";
@@ -15,6 +15,7 @@ const Chessboard = dynamic(
 );
 
 type ReplayStatus = "your-move" | "thinking" | "checkmate" | "stalemate" | "draw" | "error";
+type HistoryEntry = { san: string; fen: string; evalCp: number | null; byUser: boolean };
 
 export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: () => void }) {
   const positions    = useGameStore(s => s.positions);
@@ -36,27 +37,45 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
   );
   const hasFingerprint = Object.values(fingerprint).some(rate => rate > 0);
 
+  // chessRef always tracks the LIVE (latest) position — used for legality
+  // checks and game-over detection. What's actually shown on the board is
+  // `displayFen` below, which can be an earlier point in the replay's own
+  // move history when the user has stepped back to review it.
   const chessRef = useRef<Chess | null>(null);
-  const [fen,         setFen]         = useState(startFen);
+
+  // Populates chessRef exactly once per mount -- a ref-only effect (no
+  // state setters), so it doesn't trip the "no setState in effects" rule
+  // that governs the rest of this component's state resets. Mutating a
+  // ref during render itself isn't safe (React may discard/redo that
+  // render), so this has to run post-render even though the modal is
+  // freshly mounted per open and startFen never actually changes in
+  // practice for a given instance.
+  useEffect(() => {
+    try { chessRef.current = new Chess(startFen); } catch { chessRef.current = new Chess(); }
+  }, [startFen]);
+
   const [status,      setStatus]      = useState<ReplayStatus>("your-move");
   const [error,       setError]       = useState("");
-  const [sanHistory,  setSanHistory]  = useState<string[]>([]);
+  const [history,     setHistory]     = useState<HistoryEntry[]>([]);
+  const [viewIndex,   setViewIndex]   = useState(-1); // -1 = startFen, else history[viewIndex]
   const [lastSource,  setLastSource]  = useState<"maia" | "fingerprint_deviation" | null>(null);
   const [lastBand,    setLastBand]    = useState<number | null>(null);
-  const [evalCp,      setEvalCp]      = useState<number | null>(null);
+
+  // Invalidates any in-flight opponent-reply request on reset, so a slow
+  // response arriving after the user hits "Start over" can't clobber the
+  // freshly-reset state with a stale move from the abandoned line.
+  const requestIdRef = useRef(0);
 
   const reset = useCallback(() => {
+    requestIdRef.current += 1;
     try { chessRef.current = new Chess(startFen); } catch { chessRef.current = new Chess(); }
-    setFen(startFen);
     setStatus("your-move");
-    setSanHistory([]);
+    setHistory([]);
+    setViewIndex(-1);
     setError("");
     setLastSource(null);
     setLastBand(null);
-    setEvalCp(null);
   }, [startFen]);
-
-  useEffect(() => { reset(); }, [reset]);
 
   // Lock page scroll while the modal is open — the board sits in a portal
   // at document.body, so nothing else pins the page in place.
@@ -66,7 +85,12 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
     return () => { document.body.style.overflow = prev; };
   }, []);
 
+  const isViewingLive = viewIndex === history.length - 1;
+  const liveFen = history.length > 0 ? history[history.length - 1].fen : startFen;
+  const displayFen = viewIndex === -1 ? startFen : (history[viewIndex]?.fen ?? liveFen);
+
   const requestOpponentReply = useCallback((afterFen: string) => {
+    const myRequestId = requestIdRef.current;
     setStatus("thinking");
     replayMove({
       fen:              afterFen,
@@ -74,6 +98,7 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
       errorRateByPhase: hasFingerprint ? fingerprint : null,
       phase:            estimatePhase(afterFen),
     }).then(res => {
+      if (requestIdRef.current !== myRequestId) return; // reset happened meanwhile — discard
       try {
         if (!chessRef.current) throw new Error("no board");
         const applied = chessRef.current.move(res.move_san);
@@ -83,30 +108,39 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
         // somehow disagreed with it (promotion notation edge cases etc.)
         chessRef.current = new Chess(res.fen);
       }
-      setFen(res.fen);
-      setSanHistory(h => [...h, res.move_san]);
+      // setViewIndex is called from inside the setHistory updater (not a
+      // separate statement) so it always sees the freshly-appended array's
+      // real length, never a stale closure over `history` from render time.
+      setHistory(h => {
+        const next = [...h, { san: res.move_san, fen: res.fen, evalCp: res.eval_cp, byUser: false }];
+        setViewIndex(next.length - 1);
+        return next;
+      });
       setLastSource(res.source);
       setLastBand(res.maia_band);
-      setEvalCp(res.eval_cp);
       if (soundEnabled) playSound(sanToSound(res.move_san));
       if (res.is_checkmate)      setStatus("checkmate");
       else if (res.is_stalemate) setStatus("stalemate");
       else if (res.is_game_over) setStatus("draw");
       else                       setStatus("your-move");
     }).catch(e => {
+      if (requestIdRef.current !== myRequestId) return;
       setError((e as Error).message || "The opponent engine is unavailable right now.");
       setStatus("error");
     });
   }, [opponentRating, fingerprint, hasFingerprint, soundEnabled]);
 
   const onPieceDrop = useCallback(({ sourceSquare: from, targetSquare: to }: PieceDropHandlerArgs) => {
-    if (!chessRef.current || !to || status !== "your-move") return false;
+    if (!chessRef.current || !to || status !== "your-move" || !isViewingLive) return false;
     try {
       const move = chessRef.current.move({ from, to, promotion: "q" });
       if (!move) return false;
       const newFen = chessRef.current.fen();
-      setFen(newFen);
-      setSanHistory(h => [...h, move.san]);
+      setHistory(h => {
+        const next = [...h, { san: move.san, fen: newFen, evalCp: null, byUser: true }];
+        setViewIndex(next.length - 1);
+        return next;
+      });
       if (soundEnabled) playSound(sanToSound(move.san));
       if (chessRef.current.isGameOver()) {
         if (chessRef.current.isCheckmate())      setStatus("checkmate");
@@ -117,13 +151,13 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
       }
       return true;
     } catch { return false; }
-  }, [status, soundEnabled, requestOpponentReply]);
+  }, [status, isViewingLive, soundEnabled, requestOpponentReply]);
 
   if (!startFen) return null;
 
-  // Whoever is to move in the final FEN is the side with no legal moves —
+  // Whoever is to move in the live FEN is the side with no legal moves —
   // the mated side in a checkmate.
-  const matedColor: "White" | "Black" = fen.split(" ")[1] === "w" ? "White" : "Black";
+  const matedColor: "White" | "Black" = liveFen.split(" ")[1] === "w" ? "White" : "Black";
   const checkmateText = matedColor === userColorWord
     ? `Checkmate — ${opponentName} got you.`
     : `Checkmate — you won this line!`;
@@ -136,12 +170,18 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
     "draw":       "Drawn position.",
     "error":      error,
   };
+  const displayStatus = !isViewingLive
+    ? `Reviewing move ${viewIndex + 1} of ${history.length}`
+    : statusText[status];
 
   // How this replay line compares to what actually happened in the game at
-  // the same point — the number of half-moves played here plus where the
-  // replay started lines up with the equivalent entry in the real game's
-  // move-by-move eval history, already sitting in the store.
-  const totalPly = startPly + sanHistory.length;
+  // the same point — the ply being viewed lines up with the equivalent
+  // entry in the real game's move-by-move eval history, already sitting in
+  // the store. Only opponent-reply entries carry an eval (the user's own
+  // move isn't separately evaluated), so this only shows on those.
+  const viewedEntry = viewIndex >= 0 ? history[viewIndex] : null;
+  const evalCp = viewedEntry && !viewedEntry.byUser ? viewedEntry.evalCp : null;
+  const totalPly = startPly + viewIndex + 1;
   const actualEvalCp = totalPly > 0 ? movesData[totalPly - 1]?.score_after ?? null : null;
   const userIsWhite = userColorWord === "White";
   const toUserAdvantage = (cp: number | null) => cp == null ? null : (userIsWhite ? cp : -cp);
@@ -149,7 +189,9 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
   const actualAdvantage = toUserAdvantage(actualEvalCp ?? null);
   const evalDelta = replayAdvantage != null && actualAdvantage != null ? replayAdvantage - actualAdvantage : null;
   const EVAL_NOISE_FLOOR = 40; // cp — below this, don't claim a meaningful difference
-  const showEvalCompare = evalDelta != null && status !== "thinking";
+  const showEvalCompare = evalDelta != null;
+
+  const goTo = (idx: number) => setViewIndex(Math.max(-1, Math.min(idx, history.length - 1)));
 
   // Rendered via a portal straight to document.body: this modal was
   // previously mounted inline inside the analyze page's board column, and
@@ -188,9 +230,10 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
               Replaying from move {Math.floor(startPly / 2) + 1}
             </h2>
             <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4, maxWidth: 480 }}>
-              You play {userColorWord.toLowerCase()} from here. {opponentName} is played by an AI at{" "}
-              {opponentRating ? <><b style={{ color: "var(--text-secondary)" }}>the same {opponentRating} strength</b> as your real opponent</> : "the same strength as your real opponent"}
-              {hasFingerprint ? ", including the mistakes they actually made in this game" : ""} — not a raw chess engine.
+              You play {userColorWord.toLowerCase()} from here, against{" "}
+              <b style={{ color: "var(--text-secondary)" }}>an AI version of {opponentName}</b>
+              {opponentRating ? ` (${opponentRating} strength` : " (matched to their strength"}
+              {hasFingerprint ? ", including the mistakes they actually made in this game)" : ")"} — not a raw chess engine.
             </p>
           </div>
           <button
@@ -204,12 +247,44 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
           {/* Board */}
           <div>
             <Chessboard options={{
-              position: fen,
+              position: displayFen,
               boardOrientation: userColorWord.toLowerCase() as "white" | "black",
-              canDragPiece: () => status === "your-move",
+              canDragPiece: () => status === "your-move" && isViewingLive,
               onPieceDrop,
               boardStyle: { borderRadius: "var(--board-radius)", boxShadow: "var(--shadow-lg)" },
             }} />
+
+            {/* Replay move navigation — steps through THIS session's own
+                moves, separate from the real game's move list. */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 10 }}>
+              <button onClick={() => goTo(-1)} disabled={viewIndex === -1}
+                title="Start of this replay"
+                style={navBtnStyle(viewIndex === -1)}>⏮</button>
+              <button onClick={() => goTo(viewIndex - 1)} disabled={viewIndex === -1}
+                title="Previous move"
+                style={navBtnStyle(viewIndex === -1)}>◀</button>
+              <span style={{ fontSize: 11, color: "var(--text-muted)", minWidth: 74, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>
+                {history.length === 0 ? "No moves yet" : `Move ${viewIndex + 1} of ${history.length}`}
+              </span>
+              <button onClick={() => goTo(viewIndex + 1)} disabled={isViewingLive}
+                title="Next move"
+                style={navBtnStyle(isViewingLive)}>▶</button>
+              <button onClick={() => goTo(history.length - 1)} disabled={isViewingLive}
+                title="Jump to latest"
+                style={navBtnStyle(isViewingLive)}>⏭</button>
+            </div>
+            {!isViewingLive && (
+              <button
+                onClick={() => goTo(history.length - 1)}
+                style={{
+                  display: "block", width: "100%", marginTop: 8, padding: "7px 10px",
+                  borderRadius: 8, fontSize: 11.5, fontWeight: 600, cursor: "pointer",
+                  background: "rgba(201,162,68,0.1)", border: "1px solid rgba(201,162,68,0.3)", color: "var(--gold-light)",
+                }}
+              >
+                Reviewing an earlier move — jump to latest to keep playing ⏭
+              </button>
+            )}
           </div>
 
           {/* Side panel */}
@@ -219,7 +294,7 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
                 visually rather than blending into the status text below. */}
             {showEvalCompare && evalDelta != null && (
               <div
-                key={sanHistory.length}
+                key={viewIndex}
                 style={{
                   background: evalDelta > EVAL_NOISE_FLOOR ? "rgba(34,197,94,0.12)"
                     : evalDelta < -EVAL_NOISE_FLOOR ? "rgba(224,82,82,0.1)" : "var(--bg-elevated)",
@@ -255,29 +330,44 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
                 {status === "thinking" && (
                   <span style={{ width: 12, height: 12, border: "2px solid rgba(201,162,68,0.3)", borderTopColor: "var(--gold)", borderRadius: "50%", animation: "spin 0.8s linear infinite", flexShrink: 0 }} />
                 )}
-                {statusText[status]}
+                {displayStatus}
               </p>
-              {lastSource === "fingerprint_deviation" && (
+              {isViewingLive && lastSource === "fingerprint_deviation" && (
                 <p style={{ fontSize: 10.5, color: "var(--accent-blue)", marginTop: 4 }}>
                   ⚠ {opponentName} just missed the best move here — matching a pattern from their own game.
                 </p>
               )}
-              {lastBand != null && status !== "error" && (
+              {isViewingLive && lastBand != null && status !== "error" && (
                 <p style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 4 }}>
                   Playing at the ~{lastBand} level
                 </p>
               )}
             </div>
 
-            {/* Move history */}
-            {sanHistory.length > 0 && (
+            {/* Move history — each move is clickable, jumps the board to
+                that point in this replay's own line. */}
+            {history.length > 0 && (
               <div style={{ borderTop: "1px solid var(--border)", paddingTop: 10 }}>
                 <p style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)", marginBottom: 6 }}>
                   Moves played
                 </p>
-                <p style={{ fontSize: 12.5, fontFamily: "var(--font-mono)", color: "var(--text-secondary)", lineHeight: 1.8, wordBreak: "break-word" }}>
-                  {sanHistory.join("  ")}
-                </p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  {history.map((h, i) => (
+                    <button
+                      key={i}
+                      onClick={() => goTo(i)}
+                      style={{
+                        fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: i === viewIndex ? 800 : 500,
+                        color: i === viewIndex ? "var(--gold)" : "var(--text-secondary)",
+                        background: i === viewIndex ? "rgba(201,162,68,0.12)" : "transparent",
+                        border: `1px solid ${i === viewIndex ? "rgba(201,162,68,0.35)" : "transparent"}`,
+                        borderRadius: 4, padding: "2px 5px", cursor: "pointer",
+                      }}
+                    >
+                      {h.san}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -306,4 +396,13 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
     </div>,
     document.body
   );
+}
+
+function navBtnStyle(disabled: boolean): CSSProperties {
+  return {
+    width: 28, height: 28, borderRadius: 7, fontSize: 12,
+    background: "var(--bg-elevated)", border: "1px solid var(--border)",
+    color: disabled ? "var(--text-muted)" : "var(--text-secondary)",
+    opacity: disabled ? 0.4 : 1, cursor: disabled ? "default" : "pointer",
+  };
 }
