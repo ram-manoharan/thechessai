@@ -219,16 +219,17 @@ function EngineLinesPanel() {
           className="replay-cta-pulse"
           style={{
             display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
-            background: "linear-gradient(90deg, rgba(201,162,68,0.14), rgba(201,162,68,0.06))",
-            border: "1.5px solid var(--gold-border)",
-            borderRadius: 10, padding: "11px 14px", cursor: "pointer", textAlign: "left",
+            background: "linear-gradient(135deg, #4a7ef0 0%, #3763d6 100%)",
+            border: "none",
+            borderRadius: 10, padding: "12px 15px", cursor: "pointer", textAlign: "left",
             width: "100%",
+            boxShadow: "0 2px 14px rgba(59,99,214,0.4)",
           }}
         >
-          <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--text-primary)" }}>
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: "#fff" }}>
             {"🧪 Face an AI version of "}{opponentName}{" — could you have avoided this?"}
           </span>
-          <span style={{ fontSize: 12.5, fontWeight: 800, color: "var(--gold)", flexShrink: 0 }}>
+          <span style={{ fontSize: 12.5, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
             {"Play it out →"}
           </span>
         </button>
