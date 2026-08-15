@@ -62,6 +62,25 @@ def _game_state(board: chess.Board) -> dict:
     }
 
 
+def _evaluate(board: chess.Board) -> Optional[int]:
+    """Shallow Stockfish eval (White-perspective centipawns) of the position
+    after the opponent's reply -- lets the frontend show how this replay
+    line compares to what actually happened in the game at the same point.
+    Best-effort: None on checkmate/stalemate (no eval applies) or on any
+    engine failure, since this is a nice-to-have overlay, never a
+    dependency the move-generation response should fail over."""
+    if board.is_game_over():
+        return None
+    try:
+        with engine_pool.acquire(kind="interactive") as sf:
+            lines = engine_pool.cached_analyse(sf, board, depth=_DEVIATION_DEPTH, multi_pv=1)
+        if lines:
+            return lines[0]["score"].white().score(mate_score=10000)
+    except Exception:
+        logger.warning("Replay position eval failed", exc_info=True)
+    return None
+
+
 def _find_deviation(board: chess.Board, maia_move: chess.Move) -> Optional[chess.Move]:
     """Best-effort: the worst of Stockfish's top-3 candidates for the side
     to move, excluding Maia's own pick. Returns None (falls back to Maia)
@@ -135,5 +154,6 @@ async def replay_move(req: ReplayMoveRequest, user: CurrentUser = Depends(get_cu
         "move_san": move_san,
         "maia_band": band,
         "source": source,
+        "eval_cp": _evaluate(board),
         **_game_state(board),
     }

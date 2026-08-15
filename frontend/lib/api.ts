@@ -637,6 +637,7 @@ export type ReplayMoveResult = {
   result:         string | null;
   maia_band:      number;
   source:         "maia" | "fingerprint_deviation";
+  eval_cp:        number | null;  // White-perspective centipawns after this move
 };
 
 export async function replayMove(params: {
