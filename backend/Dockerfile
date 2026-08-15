@@ -11,6 +11,35 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && which stockfish
 
+# lc0 (Leela Chess Zero) -- runs the Maia weight files (backend/maia_weights/,
+# checked into the repo like the Stockfish binary above) that power the
+# "replay against a human-calibrated opponent" feature. No prebuilt Linux
+# binary is published upstream (only Windows/Android), so it's built from
+# source here; CPU-only via OpenBLAS, no GPU needed since Maia disables
+# search (go nodes 1 -- a single forward pass through the policy net, not a
+# tree search), which is also its officially validated mode of use.
+#
+# The build is wrapped so a failure here can't break the whole image build:
+# if compiling lc0 ever breaks (upstream branch changes, apt package
+# rename), the rest of this Dockerfile -- and the existing Stockfish-backed
+# features -- still ship. human_engine_pool.py already treats a missing lc0
+# binary as "replay feature unavailable" rather than a startup crash, so a
+# soft failure here surfaces as a 503 on /api/replay/move, not a broken
+# deploy. Check the build log for "lc0 build OK" vs the warning below after
+# the first deploy following any change to this block.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+         git gcc g++ zlib1g zlib1g-dev ninja-build libopenblas-dev pkg-config python3-pip \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --no-cache-dir meson \
+    && ( git clone --depth 1 --branch release/0.32 https://github.com/LeelaChessZero/lc0.git /tmp/lc0 \
+         && cd /tmp/lc0 \
+         && ./build.sh \
+         && cp build/release/lc0 /usr/local/bin/lc0 \
+         && echo "lc0 build OK" \
+         || echo "WARNING: lc0 build failed -- replay feature will be unavailable at runtime" ) \
+    && rm -rf /tmp/lc0
+
 WORKDIR /app
 
 COPY requirements.txt .

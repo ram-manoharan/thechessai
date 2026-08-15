@@ -8,9 +8,10 @@ from fastapi import FastAPI
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import analysis, imports, profile, user, scoresheet
+from routers import analysis, imports, profile, user, scoresheet, replay
 import db as db_module
 import engine_pool
+import human_engine_pool
 
 
 @asynccontextmanager
@@ -21,8 +22,14 @@ async def lifespan(app: FastAPI):
     # if Stockfish isn't found, rather than surprising the first user with
     # both the discovery cost AND a confusing mid-request error.
     await run_in_threadpool(engine_pool.init_pool)
+    # Maia/lc0 is optional -- if lc0 isn't installed or maia_weights/ is
+    # missing, init_pool() logs a warning and leaves the pool empty rather
+    # than failing startup; the replay endpoint reports 503 per-request
+    # instead of taking down the whole app over an optional feature.
+    await run_in_threadpool(human_engine_pool.init_pool)
     yield
     engine_pool.shutdown()
+    human_engine_pool.shutdown()
     await db_module.close_pool()
 
 
@@ -51,6 +58,7 @@ app.include_router(imports.router,    prefix="/api/import",     tags=["import"])
 app.include_router(profile.router,    prefix="/api/profile",    tags=["profile"])
 app.include_router(user.router,       prefix="/api/user",       tags=["user"])
 app.include_router(scoresheet.router, prefix="/api/scoresheet", tags=["scoresheet"])
+app.include_router(replay.router,     prefix="/api/replay",     tags=["replay"])
 
 @app.get("/api/health")
 def health():

@@ -624,6 +624,39 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
   return authedFetch(`${BASE}/api/user/dashboard-summary`);
 }
 
+// ── Replay ("play it out from here" against a human-calibrated opponent) ───
+
+export type ReplayMoveResult = {
+  move_uci:       string;
+  move_san:       string;
+  fen:            string;
+  in_check:       boolean;
+  is_checkmate:   boolean;
+  is_stalemate:   boolean;
+  is_game_over:   boolean;
+  result:         string | null;
+  maia_band:      number;
+  source:         "maia" | "fingerprint_deviation";
+};
+
+export async function replayMove(params: {
+  fen: string;
+  opponentRating?: number | null;
+  errorRateByPhase?: Record<string, number> | null;
+  phase?: string | null;
+}): Promise<ReplayMoveResult> {
+  return authedFetch(`${BASE}/api/replay/move`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      fen:                 params.fen,
+      opponent_rating:      params.opponentRating ?? null,
+      error_rate_by_phase:  params.errorRateByPhase ?? null,
+      phase:                params.phase ?? null,
+    }),
+  }) as Promise<ReplayMoveResult>;
+}
+
 // ── Scoresheet OCR ───────────────────────────────────────────────────────────
 
 export interface ScoresheetMove {

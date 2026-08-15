@@ -57,6 +57,74 @@ export function countQuality(movesData: MoveData[], color: "White" | "Black"): Q
   };
 }
 
+// ── Replay: opponent fingerprint + phase detection ──────────────────────────
+//
+// "Play it out from here" replays a position against a human-calibrated
+// opponent (Maia, rating-matched) instead of a raw engine. Generic Maia
+// plays like an average player at that rating; the fingerprint below makes
+// it play more like THIS specific opponent by feeding their own per-phase
+// error rate from the game just analyzed to the replay backend, which uses
+// it to occasionally swap in a plausible-but-suboptimal move instead of
+// Maia's pick. Mirrors backend/chess_analysis.py's _get_phase_by_material
+// closely enough for this purpose (informing which error rate applies to
+// the current replay position), without needing a round-trip to the server
+// just to classify a phase.
+
+export type PhaseErrorRates = Record<string, number>;
+
+const MIN_SAMPLE_PER_PHASE = 3;
+
+/** Per-phase (mistakes+blunders)/total for one side's moves in an already-
+ * analyzed game. Phases with too few samples are omitted rather than
+ * reported as a noisy 0% or 100% rate. */
+export function computeOpponentFingerprint(
+  movesData: MoveData[],
+  opponentColor: "White" | "Black"
+): PhaseErrorRates {
+  const byPhase: Record<string, { total: number; errors: number }> = {};
+  for (const m of movesData) {
+    if (m.color !== opponentColor) continue;
+    const phase = m.phase ?? "Middlegame";
+    const bucket = byPhase[phase] ?? (byPhase[phase] = { total: 0, errors: 0 });
+    bucket.total += 1;
+    if (m.classification.includes("Blunder") || m.classification.includes("Mistake") || m.classification.includes("Miss")) {
+      bucket.errors += 1;
+    }
+  }
+  const rates: PhaseErrorRates = {};
+  for (const [phase, { total, errors }] of Object.entries(byPhase)) {
+    if (total >= MIN_SAMPLE_PER_PHASE) rates[phase] = errors / total;
+  }
+  return rates;
+}
+
+const PHASE_PIECE_VALUES: Record<string, number> = { q: 9, r: 5, b: 3, n: 3 };
+
+/** Material-based phase estimate from a FEN alone — mirrors the backend's
+ * move-number + material heuristic closely enough to pick the right
+ * error-rate bucket during a live replay, without a server round trip. */
+export function estimatePhase(fen: string): "Opening" | "Middlegame" | "Endgame" {
+  const parts = fen.split(" ");
+  const boardPart = parts[0] ?? "";
+  const moveNumber = parseInt(parts[5] ?? "1", 10) || 1;
+  if (moveNumber <= 10) return "Opening";
+
+  let total = 0;
+  let queens = 0;
+  for (const ch of boardPart) {
+    const lower = ch.toLowerCase();
+    const val = PHASE_PIECE_VALUES[lower];
+    if (val) {
+      total += val;
+      if (lower === "q") queens += 1;
+    }
+  }
+  if (total <= 20 || (queens === 0 && total <= 30)) return "Endgame";
+  if (moveNumber <= 15 && total >= 50) return "Opening";
+  if (moveNumber > 35) return "Endgame";
+  return "Middlegame";
+}
+
 // ── Eval helpers ──────────────────────────────────────────────────────────
 
 /** Centipawns → 0-100 white advantage percentage (chess.com sigmoid). */
