@@ -15,6 +15,7 @@ import { EvalGraph } from "@/components/EvalGraph";
 import { ClockChart } from "@/components/ClockChart";
 import { OpeningBadge } from "@/components/OpeningBadge";
 import { StudyPanel } from "@/components/GameStudy";
+import { ReplayModal } from "@/components/ReplayModal";
 import { useGameStore } from "@/lib/store";
 import {
   streamAnalysis, fetchAnnotatedPgn, downloadAnnotatedPgn, explainPosition, fetchPositionPeers,
@@ -133,12 +134,14 @@ function MiniBoardPreview({ fen, flipped }: { fen: string; flipped: boolean }) {
 }
 
 function EngineLinesPanel() {
-  const movesData  = useGameStore(s => s.movesData);
-  const currentIdx = useGameStore(s => s.currentIdx);
-  const move       = useGameStore(s => s.currentMove());
-  const currentFen = useGameStore(s => s.currentFen());
-  const flipped    = useGameStore(s => s.flipped);
+  const movesData    = useGameStore(s => s.movesData);
+  const currentIdx   = useGameStore(s => s.currentIdx);
+  const move         = useGameStore(s => s.currentMove());
+  const currentFen   = useGameStore(s => s.currentFen());
+  const flipped      = useGameStore(s => s.flipped);
+  const playerColor  = useGameStore(s => s.playerColor);
   const [previewIdx, setPreviewIdx] = useState<number | null>(null);
+  const [replayOpen, setReplayOpen] = useState(false);
 
   const engineMoves: TopMove[] = movesData[currentIdx + 1]?.top_moves ?? [];
 
@@ -150,6 +153,8 @@ function EngineLinesPanel() {
 
   const isError = move && ERROR_CLASSES.some(k => move.classification?.includes(k));
   const cfg     = move ? clfConfig(move.classification ?? "") : null;
+  const playerColorWord: "White" | "Black" = playerColor === "white" ? "White" : "Black";
+  const isOwnError = isError && move?.color === playerColorWord;
 
   // Resulting FEN after playing a line's best move + its continuation, for
   // the "Show Line" mini-board preview.
@@ -199,6 +204,30 @@ function EngineLinesPanel() {
             </>
           )}
         </div>
+      )}
+
+      {/* "What if?" replay CTA — only on the player's own error moves, right
+          where their attention already is: the position they just blundered. */}
+      {isOwnError && cfg && (
+        <button
+          onClick={() => setReplayOpen(true)}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+            background: "rgba(201,162,68,0.08)", border: "1px solid rgba(201,162,68,0.3)",
+            borderRadius: 10, padding: "9px 14px", cursor: "pointer", textAlign: "left",
+            width: "100%",
+          }}
+        >
+          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>
+            {"🧪 What if you hadn't played this?"}
+          </span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "var(--gold)", flexShrink: 0 }}>
+            {"Play it out →"}
+          </span>
+        </button>
+      )}
+      {replayOpen && (
+        <ReplayModal startPly={currentIdx} onClose={() => setReplayOpen(false)} />
       )}
 
       {/* Engine lines */}

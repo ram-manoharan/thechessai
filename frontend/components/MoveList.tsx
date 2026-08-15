@@ -3,7 +3,6 @@ import React, { useEffect, useRef, useState } from "react";
 import { useGameStore } from "@/lib/store";
 import { clfConfig } from "@/lib/chess-utils";
 import { playSound, sanToSound } from "@/lib/sounds";
-import { ReplayModal } from "@/components/ReplayModal";
 
 const ERROR_CLASSES = ["Blunder", "Mistake", "Miss"];
 
@@ -53,12 +52,9 @@ export function MoveList({ innerClassName, fillHeight, seamless }: {
   const currentIdx   = useGameStore(s => s.currentIdx);
   const soundEnabled = useGameStore(s => s.soundEnabled);
   const navigateTo   = useGameStore(s => s.navigateTo);
-  const playerColor  = useGameStore(s => s.playerColor);
   const activeRef    = useRef<HTMLTableCellElement>(null);
   const scrollRef    = useRef<HTMLDivElement>(null);
   const [filterErrors, setFilterErrors] = useState(false);
-  const [replayPly,    setReplayPly]    = useState<number | null>(null);
-  const playerColorWord: "White" | "Black" = playerColor === "white" ? "White" : "Black";
 
   useEffect(() => {
     const cell = activeRef.current;
@@ -160,7 +156,6 @@ export function MoveList({ innerClassName, fillHeight, seamless }: {
                   idx={wi}
                   active={wi === currentIdx}
                   onClick={handleClick}
-                  onReplay={white.color === playerColorWord ? setReplayPly : undefined}
                   ref={wi === currentIdx ? activeRef : undefined}
                 />
                 {black && bi !== undefined
@@ -169,7 +164,6 @@ export function MoveList({ innerClassName, fillHeight, seamless }: {
                       idx={bi}
                       active={bi === currentIdx}
                       onClick={handleClick}
-                      onReplay={black.color === playerColorWord ? setReplayPly : undefined}
                       ref={bi === currentIdx ? activeRef : undefined}
                     />
                   : <td />
@@ -179,9 +173,6 @@ export function MoveList({ innerClassName, fillHeight, seamless }: {
           </tbody>
         </table>
       </div>
-      {replayPly !== null && (
-        <ReplayModal startPly={replayPly} onClose={() => setReplayPly(null)} />
-      )}
     </div>
   );
 }
@@ -193,9 +184,8 @@ const MoveCell = React.forwardRef<
     idx: number;
     active: boolean;
     onClick: (idx: number, san: string) => void;
-    onReplay?: (idx: number) => void;
   }
->(({ move, idx, active, onClick, onReplay }, ref) => {
+>(({ move, idx, active, onClick }, ref) => {
   const cfg = clfConfig(move.classification ?? "");
   const bg = active
     ? cfg?.color ? `${cfg.color}28` : "rgba(79,142,247,0.18)"
@@ -238,26 +228,6 @@ const MoveCell = React.forwardRef<
         >
           −{cpLoss}
         </span>
-      )}
-      {isError && onReplay && (
-        <button
-          title="Play it out from here — what if you hadn't made this move?"
-          onClick={e => { e.stopPropagation(); onReplay(idx); }}
-          style={{
-            marginLeft: 4,
-            fontSize: 9,
-            fontWeight: 700,
-            color: "var(--gold)",
-            background: "rgba(201,162,68,0.12)",
-            border: "1px solid rgba(201,162,68,0.3)",
-            borderRadius: 4,
-            padding: "0 4px",
-            cursor: "pointer",
-            verticalAlign: "middle",
-          }}
-        >
-          ▶
-        </button>
       )}
       {evalBar(move.accuracy_score)}
     </td>
