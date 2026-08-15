@@ -25,6 +25,7 @@ import random
 from typing import Optional
 
 import chess
+import chess.engine
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -144,6 +145,13 @@ async def replay_move(req: ReplayMoveRequest, user: CurrentUser = Depends(get_cu
         maia_move, band = human_engine_pool.play_human_move(req.fen, req.opponent_rating)
     except RuntimeError as e:
         raise HTTPException(503, str(e))
+    except (chess.engine.EngineTerminatedError, chess.engine.EngineError):
+        # The pooled lc0 process crashed mid-request -- human_engine_pool
+        # already swapped in a fresh engine for the next call, but this
+        # one still needs to fail. 503 (not 500) tells the frontend it's
+        # safe to retry the same request immediately.
+        logger.warning("Maia engine crashed handling a replay move.", exc_info=True)
+        raise HTTPException(503, "The opponent engine hit an error. Please try again.")
 
     chosen_move = maia_move
     source = "maia"

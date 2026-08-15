@@ -6,6 +6,7 @@ import { Chess, type Square } from "chess.js";
 import type { PieceDropHandlerArgs } from "react-chessboard";
 import { useGameStore } from "@/lib/store";
 import { replayMove } from "@/lib/api";
+import { replayGate } from "@/lib/replayGate";
 import { computeOpponentFingerprint, estimatePhase, PROMOTION_PIECES, PROMOTION_GLYPH, PROMOTION_LABEL, type PromotionPiece } from "@/lib/chess-utils";
 import { playSound, sanToSound } from "@/lib/sounds";
 
@@ -91,6 +92,32 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
   const isViewingLive = viewIndex === history.length - 1;
   const liveFen = history.length > 0 ? history[history.length - 1].fen : startFen;
   const displayFen = viewIndex === -1 ? startFen : (history[viewIndex]?.fen ?? liveFen);
+
+  const goTo = useCallback(
+    (idx: number) => setViewIndex(Math.max(-1, Math.min(idx, history.length - 1))),
+    [history.length]
+  );
+
+  // Tell the analyze page's global arrow-key handler to stand down while
+  // this modal is open, so ArrowLeft/ArrowRight drive this replay's own
+  // move history instead of silently jumping the real game underneath it.
+  useEffect(() => {
+    replayGate.active = true;
+    return () => { replayGate.active = false; };
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (document.activeElement as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.key === "ArrowLeft")  { e.preventDefault(); goTo(viewIndex - 1); }
+      if (e.key === "ArrowRight") { e.preventDefault(); goTo(viewIndex + 1); }
+      if (e.key === "Home")       { e.preventDefault(); goTo(-1); }
+      if (e.key === "End")        { e.preventDefault(); goTo(history.length - 1); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [viewIndex, history.length, goTo]);
 
   const requestOpponentReply = useCallback((afterFen: string) => {
     const myRequestId = requestIdRef.current;
@@ -213,8 +240,6 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
   const evalDelta = replayAdvantage != null && actualAdvantage != null ? replayAdvantage - actualAdvantage : null;
   const EVAL_NOISE_FLOOR = 40; // cp — below this, don't claim a meaningful difference
   const showEvalCompare = evalDelta != null;
-
-  const goTo = (idx: number) => setViewIndex(Math.max(-1, Math.min(idx, history.length - 1)));
 
   // Rendered via a portal straight to document.body: this modal was
   // previously mounted inline inside the analyze page's board column, and
@@ -444,6 +469,12 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
 
             {/* Actions */}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", paddingTop: 4 }}>
+              {status === "error" && (
+                <button onClick={() => requestOpponentReply(liveFen)} className="btn-gold"
+                  style={{ padding: "8px 14px", borderRadius: 8, fontSize: 12, cursor: "pointer" }}>
+                  ↻ Retry
+                </button>
+              )}
               <button onClick={reset}
                 style={{ padding: "8px 14px", borderRadius: 8, fontSize: 12, cursor: "pointer", background: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
                 ↺ Start over

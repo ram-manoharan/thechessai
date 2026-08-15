@@ -2,6 +2,7 @@
 import { useEffect, useCallback } from "react";
 import { useGameStore } from "@/lib/store";
 import { playSound, sanToSound } from "@/lib/sounds";
+import { replayGate } from "@/lib/replayGate";
 
 const ERROR_CLASSES = ["Blunder", "Mistake", "Miss"];
 
@@ -45,6 +46,7 @@ export function NavControls() {
   // Keyboard navigation
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (replayGate.active) return; // the "Play it out" modal is open — let it handle its own arrows
       const tag = (document.activeElement as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       if (e.key === "ArrowLeft")  { e.preventDefault(); go(currentIdx - 1); }
