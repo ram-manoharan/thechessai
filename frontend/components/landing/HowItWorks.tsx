@@ -32,8 +32,8 @@ const PIPELINE = [
   {
     icon: "🧩",
     step: "04",
-    title: "Study & solve",
-    desc: "Every mistake becomes a puzzle. Guess the fix yourself, then drill it until it sticks.",
+    title: "Study, solve, replay it",
+    desc: "Every mistake becomes a puzzle — or a rematch against an AI built to play like the opponent who beat you.",
     color: "var(--gold)",
     bg: "var(--gold-subtle)",
     border: "1px solid var(--gold-border)",

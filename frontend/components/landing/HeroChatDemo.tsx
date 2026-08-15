@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { MockWindow } from "./MockWindow";
 
 /** Fabricated demo position + Q&A — same "looks like the real product,
- * isn't live data" convention as StudySpotlight/ProfileSpotlight. Board is
+ * isn't live data" convention as FeatureShowcase. Board is
  * a plain letter grid (uppercase = White, lowercase = Black, "." = empty)
  * rather than pulling in react-chessboard for a purely decorative loop. */
 const BOARD = [

@@ -2,9 +2,7 @@ import { Navbar } from "@/components/Navbar";
 import { NeuralCanvas } from "@/components/NeuralCanvas";
 import { HeroCTA } from "@/components/landing/HeroCTA";
 import { Reveal } from "@/components/landing/Reveal";
-import { StudySpotlight } from "@/components/landing/StudySpotlight";
-import { ProfileSpotlight } from "@/components/landing/ProfileSpotlight";
-import { ReplaySpotlight } from "@/components/landing/ReplaySpotlight";
+import { FeatureShowcase } from "@/components/landing/FeatureShowcase";
 import { HeroChatDemo } from "@/components/landing/HeroChatDemo";
 import { HowItWorks } from "@/components/landing/HowItWorks";
 
@@ -193,24 +191,12 @@ export default function Home() {
           <div className="divider-gold" />
         </div>
 
-        {/* ── Spotlight: Interactive Study ─────────────────────────────── */}
+        {/* ── Feature showcase: one animated, tabbed demo instead of three
+               stacked static sections repeating what "How it works" and the
+               capability grid already say ─────────────────────────────── */}
         <section className="max-w-5xl mx-auto px-6 py-20">
           <Reveal>
-            <StudySpotlight />
-          </Reveal>
-        </section>
-
-        {/* ── Spotlight: Player Profiling ──────────────────────────────── */}
-        <section className="max-w-5xl mx-auto px-6 py-6 pb-20">
-          <Reveal>
-            <ProfileSpotlight />
-          </Reveal>
-        </section>
-
-        {/* ── Spotlight: Replay Against an AI Opponent ─────────────────── */}
-        <section className="max-w-5xl mx-auto px-6 py-6 pb-20">
-          <Reveal>
-            <ReplaySpotlight />
+            <FeatureShowcase />
           </Reveal>
         </section>
 
