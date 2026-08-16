@@ -366,8 +366,8 @@ export default function Home() {
               <p style={{ color: "var(--text-secondary)", fontSize: 12, fontWeight: 600, marginBottom: 2 }}>
                 Ram SM
               </p>
-              <a href="mailto:ramengineer2006@gmail.com" style={{ color: "var(--text-muted)", fontSize: 11, textDecoration: "none" }} className="hover:opacity-80">
-                ramengineer2006@gmail.com
+              <a href="mailto:feedback@thechess.ai" style={{ color: "var(--text-muted)", fontSize: 11, textDecoration: "none" }} className="hover:opacity-80">
+                feedback@thechess.ai
               </a>
             </div>
 

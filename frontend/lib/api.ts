@@ -581,6 +581,22 @@ export async function fetchPositionPeers(fen: string, tier: string): Promise<Pee
   }
 }
 
+// ── Feedback ─────────────────────────────────────────────────────────────────
+
+/** Works both signed-in and anonymous — the backend attaches user_id/email
+ * server-side when a valid session token is present. */
+export async function submitFeedback(params: {
+  message: string;
+  rating?: number;
+  page_path?: string;
+}): Promise<{ ok: boolean }> {
+  return optionalAuthedFetch(`${BASE}/api/feedback/submit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+}
+
 // ── Mistake fingerprint & spaced-repetition puzzle queue (signed-in only) ──────
 
 export type MistakeTheme = {

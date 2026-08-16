@@ -3,6 +3,7 @@ import { Geist, Geist_Mono, Playfair_Display } from "next/font/google";
 import { ThemeProvider } from "@/lib/theme";
 import { AuthProvider } from "@/components/AuthProvider";
 import { OnboardingPrompt } from "@/components/OnboardingPrompt";
+import { FeedbackWidget } from "@/components/FeedbackWidget";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -45,6 +46,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <ThemeProvider>
             {children}
             <OnboardingPrompt />
+            <FeedbackWidget />
           </ThemeProvider>
         </AuthProvider>
       </body>
