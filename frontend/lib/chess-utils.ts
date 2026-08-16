@@ -12,6 +12,23 @@ export const PROMOTION_LABEL: Record<PromotionPiece, string> = {
   q: "Queen", r: "Rook", b: "Bishop", n: "Knight",
 };
 
+// ── Alternate-move credit (puzzles/study) ──────────────────────────────────
+
+/** Classifies a played move against a live top-3 Stockfish read of the
+ * position: the #1 candidate is "best", #2/#3 are a "good alternate" worth
+ * puzzle credit, anything else is "wrong". A live top-3 read already only
+ * surfaces genuinely strong tries, so no extra cp-delta threshold is needed
+ * beyond "is it in the top 3". */
+export function classifyAttemptedMove(
+  topMoves: { SAN: string }[],
+  playedSan: string,
+): "best" | "alternate" | "wrong" {
+  const idx = topMoves.findIndex(m => m.SAN === playedSan);
+  if (idx === 0) return "best";
+  if (idx === 1 || idx === 2) return "alternate";
+  return "wrong";
+}
+
 // ── Move quality config ────────────────────────────────────────────────────
 
 export const CLF_CONFIG: Record<string, { badge: string; color: string; label: string }> = {

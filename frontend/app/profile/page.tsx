@@ -10,9 +10,12 @@ import { Navbar } from "@/components/Navbar";
 import { useCurrentTheme } from "@/lib/theme";
 import {
   fetchLichessGames, fetchChessdotcomGames, fetchLichessRatingHistory,
-  streamProfile, getMe, linkChessUsername, saveProfile, getSavedProfile,
+  streamProfile, getMe, linkChessUsername, saveProfile, getSavedProfile, evaluateCandidateMoves,
   type ProfileStats, type RatingHistoryEntry, type Me,
 } from "@/lib/api";
+import { classifyAttemptedMove } from "@/lib/chess-utils";
+import { useClickToMove } from "@/lib/useClickToMove";
+import { playSound, sanToSound } from "@/lib/sounds";
 
 const ProfileChessboard = dynamic(
   () => import("react-chessboard").then(m => m.Chessboard),
@@ -2717,10 +2720,13 @@ function generateMoveExplanation(m: WorstMove): { whyBad: string; whyBest: strin
 function PuzzleModal({ move, onClose }: { move: WorstMove; onClose: () => void }) {
   const hasFen = Boolean(move.fen);
   const [fen, setFen] = useState(move.fen ?? "");
-  const [solveState, setSolveState] = useState<"idle" | "correct" | "wrong" | "shown">("idle");
+  const [solveState, setSolveState] = useState<"idle" | "checking" | "correct" | "wrong" | "shown">("idle");
   const [hintLevel, setHintLevel] = useState(0);
   const [message, setMessage] = useState("");
   const chessRef = useRef<Chess | null>(null);
+  // Bumped on every move attempt; discards a stale evaluateCandidateMoves()
+  // response if the puzzle has since moved on (retry/show solution/new position).
+  const altCheckIdRef = useRef(0);
 
   const playerIsWhite = (move.fen ?? "").split(" ")[1] !== "b";
   const colorLabel = playerIsWhite ? "White" : "Black";
@@ -2732,36 +2738,66 @@ function PuzzleModal({ move, onClose }: { move: WorstMove; onClose: () => void }
       setSolveState("idle");
       setHintLevel(0);
       setMessage(`Find the best move for ${colorLabel} — the engine's choice instead of ${move.san}.`);
+      altCheckIdRef.current++; // discard any in-flight alt-move check
     }
   }, [move.fen, colorLabel, move.san]);
 
   const onPieceDrop = useCallback(({ sourceSquare: from, targetSquare: toOrNull }: PieceDropHandlerArgs) => {
     if (!chessRef.current || !toOrNull || solveState !== "idle") return false;
     const to = toOrNull;
+    let playedSan = "";
     try {
       const result = chessRef.current.move({ from, to, promotion: "q" });
       if (!result) return false;
+      playedSan = result.san;
     } catch { return false; }
 
-    const played = chessRef.current.history({ verbose: true }).slice(-1)[0];
-    const playedSan = played?.san ?? "";
+    playSound(sanToSound(playedSan));
     setFen(chessRef.current.fen());
 
     const uciPlayed = `${from}${to}`;
     const isCorrect = playedSan === move.best_san || uciPlayed === (move.best_move_uci ?? "");
 
     if (isCorrect) {
+      playSound("success");
       setSolveState("correct");
       setMessage(`Correct! ${move.best_san} is the engine's best move.`);
-    } else {
-      setSolveState("wrong");
-      setMessage(`Not quite — you played ${playedSan}. Engine recommends ${move.best_san}.`);
+      return true;
     }
+
+    // Not an exact match -- check whether it's still a genuinely strong try
+    // (a live top-3 Stockfish read of the position) before declaring wrong.
+    const fenBeforeMove = fen;
+    const attemptId = ++altCheckIdRef.current;
+    setSolveState("checking");
+    setMessage("Checking that move…");
+    evaluateCandidateMoves(fenBeforeMove)
+      .then(res => {
+        if (altCheckIdRef.current !== attemptId) return; // stale — position moved on meanwhile
+        if (classifyAttemptedMove(res.top_moves, playedSan) === "alternate") {
+          playSound("success");
+          setSolveState("correct");
+          setMessage(`Good alternate! ${playedSan} is also strong — ${move.best_san} was the engine's sharper choice.`);
+        } else {
+          playSound("wrong");
+          setSolveState("wrong");
+          setMessage(`Not quite — you played ${playedSan}. Engine recommends ${move.best_san}.`);
+        }
+      })
+      .catch(() => {
+        if (altCheckIdRef.current !== attemptId) return;
+        playSound("wrong");
+        setSolveState("wrong");
+        setMessage(`Not quite — you played ${playedSan}. Engine recommends ${move.best_san}.`);
+      });
     return true;
-  }, [move.best_san, move.best_move_uci, solveState]);
+  }, [move.best_san, move.best_move_uci, solveState, fen]);
+
+  const { onSquareClick, clickSquareStyles } = useClickToMove(fen, solveState === "idle", onPieceDrop);
 
   const retry = useCallback(() => {
     if (!move.fen) return;
+    altCheckIdRef.current++; // discard any in-flight alt-move check
     chessRef.current = new Chess(move.fen);
     setFen(move.fen);
     setSolveState("idle");
@@ -2771,6 +2807,7 @@ function PuzzleModal({ move, onClose }: { move: WorstMove; onClose: () => void }
 
   const showSolution = useCallback(() => {
     if (!move.fen) return;
+    altCheckIdRef.current++; // discard any in-flight alt-move check
     chessRef.current = new Chess(move.fen);
     try { chessRef.current.move(move.best_san); } catch { /* ignore invalid san */ }
     setFen(chessRef.current.fen());
@@ -2827,8 +2864,9 @@ function PuzzleModal({ move, onClose }: { move: WorstMove; onClose: () => void }
                   options={{
                     position: fen,
                     onPieceDrop: onPieceDrop,
+                    onSquareClick,
                     boardOrientation: (playerIsWhite ? "white" : "black") as "white" | "black",
-                    squareStyles: hintSquares,
+                    squareStyles: { ...hintSquares, ...clickSquareStyles },
                     allowDragging: solveState === "idle",
                     boardStyle: { borderRadius: 8 },
                   }}

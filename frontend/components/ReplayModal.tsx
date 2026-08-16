@@ -7,6 +7,7 @@ import type { PieceDropHandlerArgs } from "react-chessboard";
 import { useGameStore } from "@/lib/store";
 import { replayMove } from "@/lib/api";
 import { replayGate } from "@/lib/replayGate";
+import { useClickToMove } from "@/lib/useClickToMove";
 import { computeOpponentFingerprint, estimatePhase, PROMOTION_PIECES, PROMOTION_GLYPH, PROMOTION_LABEL, type PromotionPiece } from "@/lib/chess-utils";
 import { playSound, sanToSound } from "@/lib/sounds";
 
@@ -205,6 +206,8 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
     return commitUserMove(fromSq, toSq);
   }, [status, isViewingLive, commitUserMove]);
 
+  const { onSquareClick, clickSquareStyles } = useClickToMove(displayFen, status === "your-move" && isViewingLive, onPieceDrop);
+
   if (!startFen) return null;
 
   // Whoever is to move in the live FEN is the side with no legal moves —
@@ -301,6 +304,8 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
               boardOrientation: userColorWord.toLowerCase() as "white" | "black",
               canDragPiece: () => status === "your-move" && isViewingLive,
               onPieceDrop,
+              onSquareClick,
+              squareStyles: clickSquareStyles,
               boardStyle: { borderRadius: "var(--board-radius)", boxShadow: "var(--shadow-lg)" },
             }} />
 

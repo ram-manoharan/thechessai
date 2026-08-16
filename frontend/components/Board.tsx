@@ -5,6 +5,7 @@ import { Chess, type Square } from "chess.js";
 import type { PieceDropHandlerArgs } from "react-chessboard";
 import { useGameStore } from "@/lib/store";
 import { PROMOTION_PIECES, PROMOTION_GLYPH, PROMOTION_LABEL, type PromotionPiece } from "@/lib/chess-utils";
+import { useClickToMove } from "@/lib/useClickToMove";
 
 const Chessboard = dynamic(
   () => import("react-chessboard").then(m => m.Chessboard),
@@ -108,6 +109,8 @@ export function Board() {
     [commitExploreMove]
   );
 
+  const { onSquareClick, clickSquareStyles } = useClickToMove(exploreMode ? exploreFen : fen, exploreMode, onPieceDrop);
+
   const copyFen = useCallback(() => {
     const currentFen = exploreMode ? exploreFen : fen;
     navigator.clipboard.writeText(currentFen).then(() => {
@@ -135,7 +138,10 @@ export function Board() {
   const boardOptions: Record<string, unknown> = {
     position:          displayFen,
     boardOrientation:  orientation as "white" | "black",
-    customSquareStyles: exploreMode ? {} : lastMoveSquares,
+    // react-chessboard v5's prop is `squareStyles`, not `customSquareStyles`
+    // -- the old key was silently a no-op and last-move highlighting never
+    // actually rendered.
+    squareStyles: exploreMode ? clickSquareStyles : lastMoveSquares,
     boardStyle: {
       borderRadius: "var(--board-radius)",
       boxShadow: "var(--shadow-lg)",
@@ -150,6 +156,7 @@ export function Board() {
     boardOptions.arrows = arrows;
   } else {
     boardOptions.onPieceDrop = onPieceDrop;
+    boardOptions.onSquareClick = onSquareClick;
     boardOptions.canDragPiece = () => true;
   }
 

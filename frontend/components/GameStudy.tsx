@@ -5,9 +5,11 @@ import { useSession } from "next-auth/react";
 import { Chess } from "chess.js";
 import type { PieceDropHandlerArgs } from "react-chessboard";
 import type { MoveData, PositionExplanation, explainPosition as ExplainFn, ChatMessage, PuzzleData } from "@/lib/api";
-import { recordPuzzleProgress, chatAboutPosition, getPuzzleQueue } from "@/lib/api";
-import { CLF_CONFIG, THEME_GLOSSARY, eloBandLabel, countQuality } from "@/lib/chess-utils";
+import { recordPuzzleProgress, chatAboutPosition, getPuzzleQueue, evaluateCandidateMoves } from "@/lib/api";
+import { CLF_CONFIG, THEME_GLOSSARY, eloBandLabel, countQuality, classifyAttemptedMove } from "@/lib/chess-utils";
 import { useGameStore } from "@/lib/store";
+import { useClickToMove } from "@/lib/useClickToMove";
+import { playSound, sanToSound } from "@/lib/sounds";
 import { DonutChart, PhaseArc, printReport, type DonutSlice, type ReportData } from "@/components/AIReport";
 
 // ── Dynamic chessboard (no SSR) ───────────────────────────────────────────────
@@ -106,7 +108,7 @@ export function StudyPuzzleModal({
       a "Next Puzzle" button once finished) instead of the single-puzzle UI. */
   drillInfo?: { index: number; total: number; streak: number; onNext: () => void };
 }) {
-  type SolveState = "idle" | "wrong" | "correct" | "shown";
+  type SolveState = "idle" | "checking" | "wrong" | "correct" | "shown";
 
   const { status: sessionStatus } = useSession();
   const estimatedElo = useGameStore(s => s.estimatedElo);
@@ -125,6 +127,9 @@ export function StudyPuzzleModal({
   const [puzzleStage, setPuzzleStage] = useState<0 | 1>(0);
   const [followUpNote, setFollowUpNote] = useState<string | null>(null);
   const [awaitingReply, setAwaitingReply] = useState(false);
+  // Alternate-move credit: set when the player's move wasn't the stored best
+  // move but a live engine check found it among the top 3 anyway.
+  const [altMoveSan, setAltMoveSan] = useState<string | null>(null);
   // "Ask before telling" (enhancement #4): capture the player's own guess at
   // WHY the best move works before revealing the AI explanation, so learning
   // isn't just passively nodding along at an answer they never attempted.
@@ -132,6 +137,10 @@ export function StudyPuzzleModal({
   const [reasoningDraft, setReasoningDraft] = useState("");
   const wrongTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const replyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Bumped on every move attempt; an in-flight evaluateCandidateMoves()
+  // response is discarded if this no longer matches the attempt it was
+  // fired for (position changed, retried, or a new puzzle was opened).
+  const altCheckIdRef = useRef(0);
 
   // Reset everything when a new position is opened
   useEffect(() => {
@@ -145,6 +154,7 @@ export function StudyPuzzleModal({
     setPuzzleStage(0);
     setFollowUpNote(null);
     setAwaitingReply(false);
+    setAltMoveSan(null);
     setReasoningRevealed(false);
     setReasoningDraft("");
     return () => {
@@ -234,6 +244,8 @@ export function StudyPuzzleModal({
     } catch { return {}; }
   }, [hintLevel, currentFen, targetSan]);
 
+  const canMoveNow = (solveState === "idle" || solveState === "wrong") && !awaitingReply;
+
   const handlePieceDrop = useCallback(({ sourceSquare: from, targetSquare: toRaw }: PieceDropHandlerArgs) => {
     if (!toRaw) return false;
     const to = toRaw;
@@ -245,12 +257,14 @@ export function StudyPuzzleModal({
       const chess = new Chess(currentFen);
       const played = chess.move({ from, to, promotion: "q" });
       if (!played) return false;
+      playSound(sanToSound(played.san));
 
       const cmp = new Chess(currentFen);
       const target = targetSan ? cmp.move(targetSan) : null;
       const isCorrect = target && played.from === target.from && played.to === target.to;
 
       if (isCorrect) {
+        playSound("success");
         setCurrentFen(chess.fen());
         setHintLevel(0);
 
@@ -260,7 +274,8 @@ export function StudyPuzzleModal({
           replyTimer.current = setTimeout(() => {
             try {
               const afterReply = new Chess(chess.fen());
-              afterReply.move(position.continuation![0]);
+              const reply = afterReply.move(position.continuation![0]);
+              if (reply) playSound(sanToSound(reply.san));
               setCurrentFen(afterReply.fen());
               setPuzzleStage(1);
             } catch {
@@ -285,25 +300,63 @@ export function StudyPuzzleModal({
       } else if (puzzleStage === 1) {
         // Lenient on the follow-up: the player already found the key idea in
         // the first move, which is the actual lesson — don't make them redo it.
+        playSound("success");
         setFollowUpNote(`Close — the sharper follow-up was ${targetSan}, but you'd already found the key idea.`);
         setSolveState("correct");
         if (sessionStatus === "authenticated") {
           recordPuzzleProgress({ puzzleFen: position.fen_before, source: "own_game", solved: true }).catch(() => {});
         }
       } else {
-        setSolveState("wrong");
-        wrongTimer.current = setTimeout(() => {
-          setCurrentFen(position.fen_before);
-          setSolveState("idle");
-        }, 1300);
+        // Not an exact match on the SAN we expected -- before flashing
+        // "wrong", check whether it's still a genuinely strong try (a live
+        // top-3 Stockfish read of the position, so this works regardless of
+        // what data the puzzle itself carries).
+        const fenBeforeMove = currentFen;
+        const playedSan = played.san;
+        const afterFen = chess.fen();
+        const attemptId = ++altCheckIdRef.current;
+        setSolveState("checking");
+
+        const flashWrong = () => {
+          playSound("wrong");
+          setSolveState("wrong");
+          wrongTimer.current = setTimeout(() => {
+            setCurrentFen(position.fen_before);
+            setSolveState("idle");
+          }, 2400);
+        };
+
+        evaluateCandidateMoves(fenBeforeMove)
+          .then(res => {
+            if (altCheckIdRef.current !== attemptId) return; // stale — position changed/retried meanwhile
+            const outcome = classifyAttemptedMove(res.top_moves, playedSan);
+            if (outcome === "alternate") {
+              playSound("success");
+              setAltMoveSan(playedSan);
+              setCurrentFen(afterFen);
+              setSolveState("correct");
+              if (sessionStatus === "authenticated") {
+                recordPuzzleProgress({ puzzleFen: position.fen_before, source: "own_game", solved: true }).catch(() => {});
+              }
+            } else {
+              flashWrong();
+            }
+          })
+          .catch(() => {
+            if (altCheckIdRef.current !== attemptId) return;
+            flashWrong();
+          });
       }
       return true;
     } catch { return false; }
   }, [solveState, awaitingReply, currentFen, targetSan, puzzleStage, hasFollowUp, position, sessionStatus]);
 
+  const { onSquareClick, clickSquareStyles } = useClickToMove(currentFen, canMoveNow, handlePieceDrop);
+
   function showSolution() {
     if (wrongTimer.current) clearTimeout(wrongTimer.current);
     if (replyTimer.current) clearTimeout(replyTimer.current);
+    altCheckIdRef.current++; // discard any in-flight alt-move check
     try {
       const chess = new Chess(position.fen_before);
       chess.move(position.best);
@@ -315,17 +368,20 @@ export function StudyPuzzleModal({
     } catch { /* leave board as-is */ }
     setPuzzleStage(hasFollowUp ? 1 : 0);
     setAwaitingReply(false);
+    setAltMoveSan(null);
     setSolveState("shown");
   }
 
   function retry() {
     if (wrongTimer.current) clearTimeout(wrongTimer.current);
     if (replyTimer.current) clearTimeout(replyTimer.current);
+    altCheckIdRef.current++; // discard any in-flight alt-move check
     setSolveState("idle");
     setCurrentFen(position.fen_before);
     setHintLevel(0);
     setPuzzleStage(0);
     setFollowUpNote(null);
+    setAltMoveSan(null);
     setAwaitingReply(false);
   }
 
@@ -450,9 +506,10 @@ export function StudyPuzzleModal({
                 options={{
                   position: currentFen,
                   onPieceDrop: handlePieceDrop,
+                  onSquareClick,
                   boardOrientation,
-                  allowDragging: (solveState === "idle" || solveState === "wrong") && !awaitingReply,
-                  squareStyles: hintSquares,
+                  allowDragging: canMoveNow,
+                  squareStyles: { ...hintSquares, ...clickSquareStyles },
                   boardStyle: { borderRadius: 6 },
                 }}
               />
@@ -606,6 +663,19 @@ export function StudyPuzzleModal({
               </div>
             )}
 
+            {/* Checking a near-miss against a live engine read before flashing wrong */}
+            {solveState === "checking" && (
+              <div
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  gap: 10, flex: 1, padding: "24px 0",
+                }}
+              >
+                <div style={{ fontSize: 16, animation: "pulseGlow 1s ease-in-out infinite" }}>♟</div>
+                <span style={{ fontSize: 13, color: "var(--text-muted)", fontWeight: 600 }}>Checking that move…</span>
+              </div>
+            )}
+
             {/* Wrong */}
             {solveState === "wrong" && (
               <div
@@ -640,11 +710,18 @@ export function StudyPuzzleModal({
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ color: "var(--accent-green)", fontSize: 18 }}>✓</span>
+                  <span style={{ color: "var(--accent-green)", fontSize: 18 }}>{altMoveSan ? "◈" : "✓"}</span>
                   <span style={{ fontSize: 13, fontWeight: 700, color: "var(--accent-green)" }}>
-                    Correct! You found the best move.
+                    {altMoveSan ? "Good alternate!" : "Correct! You found the best move."}
                   </span>
                 </div>
+                {altMoveSan && (
+                  <p style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6, margin: "0 0 0 28px" }}>
+                    <strong style={{ fontFamily: "var(--font-mono)", color: "var(--text-primary)" }}>{altMoveSan}</strong> is
+                    also strong — <strong style={{ fontFamily: "var(--font-mono)", color: "var(--text-primary)" }}>{targetSan}</strong> was
+                    the engine&apos;s sharper choice.
+                  </p>
+                )}
                 {followUpNote && (
                   <p style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6, margin: "0 0 0 28px" }}>
                     {followUpNote}

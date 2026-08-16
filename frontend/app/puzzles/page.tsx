@@ -8,10 +8,12 @@ import Link from "next/link";
 import { Navbar } from "@/components/Navbar";
 import { useGameStore } from "@/lib/store";
 import {
-  getPuzzleQueue, getMistakeFingerprint, recordPuzzleProgress, getPuzzleStats,
+  getPuzzleQueue, getMistakeFingerprint, recordPuzzleProgress, getPuzzleStats, evaluateCandidateMoves,
   type PuzzleData, type MistakeTheme, type PuzzleStats,
 } from "@/lib/api";
-import { THEME_GLOSSARY } from "@/lib/chess-utils";
+import { THEME_GLOSSARY, classifyAttemptedMove } from "@/lib/chess-utils";
+import { useClickToMove } from "@/lib/useClickToMove";
+import { playSound, sanToSound } from "@/lib/sounds";
 
 const Chessboard = dynamic(
   () => import("react-chessboard").then(m => m.Chessboard),
@@ -20,7 +22,7 @@ const Chessboard = dynamic(
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-type SolveState = "idle" | "partial" | "correct" | "wrong" | "shown";
+type SolveState = "idle" | "partial" | "checking" | "correct" | "wrong" | "shown";
 type PuzzleResult = "correct" | "wrong" | null;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -369,11 +371,17 @@ export default function PuzzlesPage() {
   const [wrongAttempts,  setWrongAttempts]  = useState(0);
   const [autoAdvance,    setAutoAdvance]    = useState(true);
   const [elapsed,        setElapsed]        = useState(0);
+  // Set when a played move wasn't the stored best move but a live engine
+  // check found it among the top 3 anyway -- counts as solved, distinct message.
+  const [altMove,        setAltMove]        = useState<{ played: string; best: string } | null>(null);
 
   const chessRef      = useRef<Chess | null>(null);
   const autoAdvRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrongTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timerRef      = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Bumped on every move attempt; discards a stale evaluateCandidateMoves()
+  // response if the puzzle has since moved on (retry/next/navigate).
+  const altCheckIdRef  = useRef(0);
 
   const SESSION_GOAL = 10;
   const puzzle = puzzles[puzzleIdx] ?? null;
@@ -411,6 +419,7 @@ export default function PuzzlesPage() {
     if (autoAdvRef.current)    clearTimeout(autoAdvRef.current);
     if (wrongTimerRef.current) clearTimeout(wrongTimerRef.current);
     if (timerRef.current)      clearInterval(timerRef.current);
+    altCheckIdRef.current++; // discard any in-flight alt-move check
     try {
       chessRef.current = new Chess(p.fen);
     } catch {
@@ -421,6 +430,7 @@ export default function PuzzlesPage() {
     setSolutionStep(0);
     setHintLevel(0);
     setPlayedSan("");
+    setAltMove(null);
     setWrongAttempts(0);
     setElapsed(0);
     setPuzzleIdx(idx);
@@ -468,23 +478,27 @@ export default function PuzzlesPage() {
   const advanceSession = useCallback((result: PuzzleResult, currentIdx: number) => {
     setSessionResults(prev => { const n = [...prev]; n[currentIdx] = result; return n; });
     if (!autoAdvance) return; // wait for the user to click "Next puzzle"
+    // 4s, not 1.6s — there's a lot to read after a solve (best move, solution
+    // line, theme reveal), and a good-alternate message on top of that.
     if (currentIdx + 1 < puzzles.length) {
-      autoAdvRef.current = setTimeout(() => initPuzzle(puzzles[currentIdx + 1], currentIdx + 1), 1600);
+      autoAdvRef.current = setTimeout(() => initPuzzle(puzzles[currentIdx + 1], currentIdx + 1), 4000);
     } else {
       autoAdvRef.current = setTimeout(() => {
         setSessionDone(true);
         getPuzzleStats().then(setStats).catch(() => {});
-      }, 1600);
+      }, 4000);
     }
   }, [puzzles, initPuzzle, autoAdvance]);
 
   // ── On piece drop ──────────────────────────────────────────────────────────
 
   const onPieceDrop = useCallback(({ sourceSquare: from, targetSquare: toOrNull }: PieceDropHandlerArgs) => {
-    if (!chessRef.current || !puzzle || !toOrNull || solveState === "correct" || solveState === "shown") return false;
+    if (!chessRef.current || !puzzle || !toOrNull) return false;
+    if (solveState === "correct" || solveState === "shown" || solveState === "checking") return false;
     try {
       const move = chessRef.current.move({ from, to: toOrNull, promotion: "q" });
       if (!move) return false;
+      playSound(sanToSound(move.san));
 
       const san = move.san;
       setPlayedSan(san);
@@ -494,17 +508,51 @@ export default function PuzzlesPage() {
       const expectedSan  = solutionSans[solutionStep] ?? "";
       const isCorrectMove = san === expectedSan;
 
-      if (!isCorrectMove) {
-        // Wrong move — snap back piece, flash briefly, let user try again
-        chessRef.current.undo();
+      const flashWrong = () => {
+        chessRef.current?.undo();
         setFen(fen);
-        setPlayedSan(san);
         setWrongAttempts(a => a + 1);
+        playSound("wrong");
         setSolveState("wrong");
         if (wrongTimerRef.current) clearTimeout(wrongTimerRef.current);
         wrongTimerRef.current = setTimeout(
-          () => setSolveState(s => s === "wrong" ? "idle" : s), 950
+          () => setSolveState(s => s === "wrong" ? "idle" : s), 2400
         );
+      };
+
+      if (!isCorrectMove) {
+        // Only the FINAL expected move can earn alternate credit -- an
+        // earlier step in a forced multi-move sequence needs the exact SAN,
+        // since the scripted opponent reply only applies to that line.
+        const isFinalStep = solutionStep === solutionSans.length - 1;
+        if (isFinalStep) {
+          const fenBeforeMove = fen;
+          const attemptId = ++altCheckIdRef.current;
+          setSolveState("checking");
+          evaluateCandidateMoves(fenBeforeMove)
+            .then(res => {
+              if (altCheckIdRef.current !== attemptId) return; // stale — puzzle moved on meanwhile
+              if (classifyAttemptedMove(res.top_moves, san) === "alternate") {
+                playSound("success");
+                setAltMove({ played: san, best: expectedSan });
+                setFen(newFen);
+                if (timerRef.current) clearInterval(timerRef.current);
+                setSolveState("correct");
+                recordProgress(puzzle, true);
+                advanceSession("correct", puzzleIdx);
+              } else {
+                flashWrong();
+              }
+            })
+            .catch(() => {
+              if (altCheckIdRef.current !== attemptId) return;
+              flashWrong();
+            });
+          return false; // tentatively rejected on the board until the check resolves
+        }
+
+        // Wrong move — snap back piece, flash briefly, let user try again
+        flashWrong();
         return false;
       }
 
@@ -516,6 +564,7 @@ export default function PuzzlesPage() {
       const isLastMove = nextStep >= solutionSans.length;
 
       if (isLastMove) {
+        playSound("success");
         // All solution moves found — correct!
         if (timerRef.current) clearInterval(timerRef.current);
         setSolveState("correct");
@@ -535,6 +584,7 @@ export default function PuzzlesPage() {
               if (!chessRef.current) return;
               const resp = chessRef.current.move(responseToPlay);
               if (resp) {
+                playSound(sanToSound(resp.san));
                 setFen(chessRef.current.fen());
                 setSolveState("idle");
               }
@@ -550,11 +600,16 @@ export default function PuzzlesPage() {
     } catch { return false; }
   }, [puzzle, solveState, solutionStep, fen, puzzleIdx, recordProgress, advanceSession]);
 
+  const canMoveNow = solveState === "idle" || solveState === "wrong";
+  const { onSquareClick, clickSquareStyles } = useClickToMove(fen, canMoveNow, onPieceDrop);
+
   // ── Show solution ──────────────────────────────────────────────────────────
 
   const showSolution = useCallback(() => {
     if (!puzzle) return;
     if (timerRef.current) clearInterval(timerRef.current);
+    altCheckIdRef.current++; // discard any in-flight alt-move check
+    setAltMove(null);
     const solutionSans = puzzle.solution_sans?.length ? puzzle.solution_sans : [puzzle.best_move_san];
     try {
       const c = new Chess(puzzle.fen);
@@ -576,6 +631,7 @@ export default function PuzzlesPage() {
     if (autoAdvRef.current) clearTimeout(autoAdvRef.current);
     if (wrongTimerRef.current) clearTimeout(wrongTimerRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
+    altCheckIdRef.current++; // discard any in-flight alt-move check
     try { chessRef.current = new Chess(puzzle.fen); } catch { chessRef.current = new Chess(); }
     setFen(puzzle.fen);
     setSolveState("idle");
@@ -584,6 +640,7 @@ export default function PuzzlesPage() {
     setPlayedSan("");
     setWrongAttempts(0);
     setElapsed(0);
+    setAltMove(null);
     setSessionResults(prev => { const n = [...prev]; n[puzzleIdx] = null; return n; });
     timerRef.current = setInterval(() => setElapsed(t => t + 1), 1000);
   }, [puzzle, puzzleIdx]);
@@ -815,9 +872,10 @@ export default function PuzzlesPage() {
                 <Chessboard options={{
                   position: fen,
                   boardOrientation: puzzleColor(puzzle.fen) as "white" | "black",
-                  canDragPiece: () => solveState === "idle" || solveState === "wrong",
+                  canDragPiece: () => canMoveNow,
                   onPieceDrop,
-                  squareStyles: hintSquares,
+                  onSquareClick,
+                  squareStyles: { ...hintSquares, ...clickSquareStyles },
                   boardStyle: { borderRadius: "var(--board-radius)", boxShadow: "var(--shadow-lg)" },
                 }} />
 
@@ -869,6 +927,14 @@ export default function PuzzlesPage() {
                   </div>
                 )}
 
+                {/* Checking a near-miss against a live engine read before flashing wrong */}
+                {solveState === "checking" && (
+                  <div style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ fontSize: 16, animation: "pop-in 1s ease-in-out infinite" }}>♟</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-muted)" }}>Checking that move…</span>
+                  </div>
+                )}
+
                 {/* Partial correct state */}
                 {solveState === "partial" && (
                   <div style={{ background: "rgba(201,162,68,0.08)", border: "1px solid rgba(201,162,68,0.25)", borderRadius: 10, padding: "10px 14px", animation: "pop-in 0.3s ease both" }}>
@@ -889,14 +955,21 @@ export default function PuzzlesPage() {
                       animation: solveState === "correct" ? "pop-in 0.4s cubic-bezier(0.34,1.56,0.64,1) both" : "fade-up 0.3s ease both",
                     }}>
                     {/* Result header */}
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: altMove ? 2 : 10 }}>
                       <span style={{ fontSize: 18, color: solveState === "correct" ? "var(--accent-green)" : "var(--gold)" }}>
-                        {solveState === "correct" ? "✓" : "◈"}
+                        {solveState === "correct" ? (altMove ? "◈" : "✓") : "◈"}
                       </span>
                       <span style={{ fontSize: 13, fontWeight: 700, color: solveState === "correct" ? "var(--accent-green)" : "var(--gold-light)" }}>
-                        {solveState === "correct" ? "Correct!" : "Here's the solution"}
+                        {solveState === "correct" ? (altMove ? "Good alternate!" : "Correct!") : "Here's the solution"}
                       </span>
                     </div>
+                    {altMove && (
+                      <p style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6, margin: "0 0 10px" }}>
+                        <strong style={{ fontFamily: "monospace", color: "var(--text-primary)" }}>{altMove.played}</strong> is
+                        also strong — the engine&apos;s sharper choice was{" "}
+                        <strong style={{ fontFamily: "monospace", color: "var(--text-primary)" }}>{altMove.best}</strong>.
+                      </p>
+                    )}
 
                     {/* Best move(s) */}
                     <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>

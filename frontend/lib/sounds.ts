@@ -41,7 +41,12 @@ const cas  = () => { mv(); setTimeout(mv, 85); };
 const chk  = () => { mv(); tone(740, 0.22, 0.18); };
 const mate = () => { cap(); tone(880, 0.15, 0.22); setTimeout(() => tone(660, 0.2, 0.18), 120); };
 
-export type SoundType = "move" | "capture" | "castle" | "check" | "checkmate";
+// Puzzle-solving feedback -- deliberately distinct from the in-game sounds
+// above so a puzzle miss never sounds like losing a real game.
+const success = () => { tone(660, 0.12, 0.2); setTimeout(() => tone(880, 0.16, 0.22), 90); };
+const wrong   = () => { tone(196, 0.16, 0.16); tone(185, 0.16, 0.1); };
+
+export type SoundType = "move" | "capture" | "castle" | "check" | "checkmate" | "success" | "wrong";
 
 export function sanToSound(san: string): SoundType {
   if (!san) return "move";
@@ -54,10 +59,12 @@ export function sanToSound(san: string): SoundType {
 
 export function playSound(type: SoundType) {
   switch (type) {
-    case "capture":    cap();  break;
-    case "castle":     cas();  break;
-    case "check":      chk();  break;
-    case "checkmate":  mate(); break;
+    case "capture":    cap();     break;
+    case "castle":     cas();     break;
+    case "check":      chk();     break;
+    case "checkmate":  mate();    break;
+    case "success":    success(); break;
+    case "wrong":      wrong();   break;
     default:           mv();
   }
 }

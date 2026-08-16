@@ -534,6 +534,19 @@ export async function explainPosition(params: {
   });
 }
 
+export type CandidateMove = { Move: string; SAN: string; Evaluation: { type: "cp" | "mate"; value: number } };
+
+/** Live top-N Stockfish candidates for a position -- powers "good alternate"
+ * move detection in puzzles/study (see lib/chess-utils.ts's
+ * classifyAttemptedMove). Backend endpoint needs no auth. */
+export async function evaluateCandidateMoves(fen: string, multiPv = 3): Promise<{ top_moves: CandidateMove[] }> {
+  return optionalAuthedFetch(`${BASE}/api/analysis/position`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fen, multi_pv: multiPv }),
+  });
+}
+
 // ── Conversational follow-up on a position ──────────────────────────────────
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
