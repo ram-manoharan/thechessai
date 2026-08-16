@@ -13,8 +13,13 @@ const prefersReducedMotion = typeof window !== "undefined"
   && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
+// The "white piece" Unicode code points (♔♕♖♗♘♙) are drawn as hollow
+// outline glyphs in most fonts — no CSS color/stroke can make them solid,
+// which is why white pieces kept vanishing on light squares. Using the
+// solid "black piece" glyph set for both sides and coloring purely via
+// CSS fixes it for real instead of cosmetically.
 const PIECE_GLYPH: Record<string, string> = {
-  K: "♔", Q: "♕", R: "♖", B: "♗", N: "♘", P: "♙",
+  K: "♚", Q: "♛", R: "♜", B: "♝", N: "♞", P: "♟",
   k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟",
 };
 
@@ -24,6 +29,24 @@ function parseBoard(rows: string[]): string[][] {
 
 function squareToRC(square: string): { r: number; c: number } {
   return { c: FILES.indexOf(square[0]), r: 8 - parseInt(square[1], 10) };
+}
+
+/** Both sides render the solid glyph set (see PIECE_GLYPH), so color alone
+ * now has a real filled shape to work with — a thin opposite-tone stroke
+ * keeps either color legible regardless of which square it lands on. */
+function pieceStyle(piece: string) {
+  const isWhite = piece === piece.toUpperCase();
+  return isWhite
+    ? {
+        color: "#fbfaf6",
+        WebkitTextStroke: "0.6px #241c10",
+        textShadow: "0 1px 1px rgba(0,0,0,0.35)",
+      }
+    : {
+        color: "#1c1712",
+        WebkitTextStroke: "0.5px rgba(255,255,255,0.55)",
+        textShadow: "0 1px 1px rgba(0,0,0,0.2)",
+      };
 }
 
 /** Small letter-grid board (uppercase = White, lowercase = Black, "." =
@@ -100,10 +123,7 @@ function MiniBoard({
                 background: isLight ? "var(--board-light)" : "var(--board-dark)",
                 fontSize: "clamp(12px, 2.6vw, 19px)",
                 lineHeight: 1,
-                color: cell === cell.toUpperCase() ? "#f5f5f0" : "#1a1a1a",
-                textShadow: cell === cell.toUpperCase()
-                  ? "0 1px 1px rgba(0,0,0,0.55)"
-                  : "0 1px 1px rgba(255,255,255,0.25)",
+                ...(cell !== "." ? pieceStyle(cell) : null),
               }}
             >
               {ring && (
@@ -136,10 +156,7 @@ function MiniBoard({
               lineHeight: 1,
               pointerEvents: "none",
               zIndex: 2,
-              color: move.piece === move.piece.toUpperCase() ? "#f5f5f0" : "#1a1a1a",
-              textShadow: move.piece === move.piece.toUpperCase()
-                ? "0 1px 1px rgba(0,0,0,0.55)"
-                : "0 1px 1px rgba(255,255,255,0.25)",
+              ...pieceStyle(move.piece),
             }}
           >
             {PIECE_GLYPH[move.piece]}

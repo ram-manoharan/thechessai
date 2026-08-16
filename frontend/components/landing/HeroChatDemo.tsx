@@ -17,8 +17,13 @@ const BOARD = [
   "R.BQ.RK.",
 ].map(row => row.split(""));
 
+// The "white piece" Unicode code points (♔♕♖♗♘♙) are drawn as hollow
+// outline glyphs in most fonts — no CSS color/stroke can make them solid,
+// which is why white pieces kept vanishing on light squares. Using the
+// solid "black piece" glyph set for both sides and coloring purely via
+// CSS fixes it for real instead of cosmetically.
 const PIECE_GLYPH: Record<string, string> = {
-  K: "♔", Q: "♕", R: "♖", B: "♗", N: "♘", P: "♙",
+  K: "♚", Q: "♛", R: "♜", B: "♝", N: "♞", P: "♟",
   k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟",
 };
 
@@ -36,6 +41,23 @@ const PAIRS = [
 ];
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
+
+/** Matches CapabilityShowcase's MiniBoard: both sides render the solid
+ * glyph set, so color alone now has a real filled shape to work with. */
+function pieceStyle(piece: string) {
+  const isWhite = piece === piece.toUpperCase();
+  return isWhite
+    ? {
+        color: "#fbfaf6",
+        WebkitTextStroke: "0.6px #241c10",
+        textShadow: "0 1px 1px rgba(0,0,0,0.35)",
+      }
+    : {
+        color: "#1c1712",
+        WebkitTextStroke: "0.5px rgba(255,255,255,0.55)",
+        textShadow: "0 1px 1px rgba(0,0,0,0.2)",
+      };
+}
 
 function MiniBoard({ highlightSquare }: { highlightSquare: string }) {
   return (
@@ -68,10 +90,7 @@ function MiniBoard({ highlightSquare }: { highlightSquare: string }) {
                 background: isLight ? "var(--board-light)" : "var(--board-dark)",
                 fontSize: "clamp(11px, 2.6vw, 18px)",
                 lineHeight: 1,
-                color: cell === cell.toUpperCase() ? "#f5f5f0" : "#1a1a1a",
-                textShadow: cell === cell.toUpperCase()
-                  ? "0 1px 1px rgba(0,0,0,0.55)"
-                  : "0 1px 1px rgba(255,255,255,0.25)",
+                ...(cell !== "." ? pieceStyle(cell) : null),
               }}
             >
               {isHighlighted && (
