@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
 import { MockWindow } from "./MockWindow";
-import { MiniBoard, parseBoard } from "./MiniBoard";
 
 /** Fabricated demo position + Q&A — looks like the real product, isn't live
- * data. */
-const BOARD = parseBoard([
+ * data. Board is a plain letter grid (uppercase = White, lowercase = Black,
+ * "." = empty) rather than pulling in react-chessboard for a purely
+ * decorative loop. */
+const BOARD = [
   "r.bq.rk.",
   "ppp..ppp",
   "..n..n..",
@@ -14,7 +15,12 @@ const BOARD = parseBoard([
   "..N.....",
   "PP..BPPP",
   "R.BQ.RK.",
-]);
+].map(row => row.split(""));
+
+const PIECE_GLYPH: Record<string, string> = {
+  K: "♔", Q: "♕", R: "♖", B: "♗", N: "♘", P: "♙",
+  k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟",
+};
 
 const PAIRS = [
   {
@@ -28,6 +34,66 @@ const PAIRS = [
     a: "No — after 22...Rxe4 23.Qd8+! Kh7 24.Qxc7 you're down an exchange for nothing. The rook was doing more good defending e7.",
   },
 ];
+
+const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
+
+function MiniBoard({ highlightSquare }: { highlightSquare: string }) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(8, 1fr)",
+        width: "100%",
+        aspectRatio: "1 / 1",
+        borderRadius: 8,
+        overflow: "hidden",
+        border: "1px solid var(--border-strong)",
+        boxShadow: "var(--shadow-md)",
+        flexShrink: 0,
+      }}
+    >
+      {BOARD.map((row, r) =>
+        row.map((cell, c) => {
+          const isLight = (r + c) % 2 === 0;
+          const square = `${FILES[c]}${8 - r}`;
+          const isHighlighted = square === highlightSquare;
+          return (
+            <div
+              key={square}
+              style={{
+                position: "relative",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: isLight ? "var(--board-light)" : "var(--board-dark)",
+                fontSize: "clamp(11px, 2.6vw, 18px)",
+                lineHeight: 1,
+                color: cell === cell.toUpperCase() ? "#f5f5f0" : "#1a1a1a",
+                textShadow: cell === cell.toUpperCase()
+                  ? "0 1px 1px rgba(0,0,0,0.55)"
+                  : "0 1px 1px rgba(255,255,255,0.25)",
+              }}
+            >
+              {isHighlighted && (
+                <span
+                  style={{
+                    position: "absolute",
+                    inset: 1,
+                    borderRadius: 3,
+                    border: "2px solid var(--gold)",
+                    boxShadow: "0 0 8px var(--gold-glow)",
+                    animation: "chat-demo-square-pulse 1.6s ease-in-out infinite",
+                  }}
+                />
+              )}
+              {cell !== "." && PIECE_GLYPH[cell]}
+            </div>
+          );
+        }),
+      )}
+    </div>
+  );
+}
 
 type Phase = "user-typing" | "user-hold" | "ai-typing-indicator" | "ai-typing" | "ai-hold" | "fade-out";
 
@@ -96,7 +162,7 @@ export function HeroChatDemo() {
         style={{ gap: 16, alignItems: "flex-start", opacity: fading ? 0 : 1, transition: "opacity 0.35s ease" }}
       >
         <div style={{ width: 148, flexShrink: 0, margin: "0 auto" }}>
-          <MiniBoard rows={BOARD} rings={{ [pair.highlight]: "var(--gold)" }} size={148} />
+          <MiniBoard highlightSquare={pair.highlight} />
         </div>
 
         <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -152,6 +218,10 @@ export function HeroChatDemo() {
       </div>
 
       <style>{`
+        @keyframes chat-demo-square-pulse {
+          0%, 100% { opacity: 0.65; }
+          50%      { opacity: 1; }
+        }
         @keyframes chat-demo-blink {
           0%, 49% { opacity: 1; }
           50%, 100% { opacity: 0; }
