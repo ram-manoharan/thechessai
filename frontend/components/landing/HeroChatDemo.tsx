@@ -156,7 +156,7 @@ export function HeroChatDemo() {
   const fading = phase === "fade-out";
 
   return (
-    <MockWindow label="✍ Ask the coach — after 14. Nd5">
+    <MockWindow label="✍ Ask the AI coach — after 14. Nd5">
       <div
         className="flex flex-col sm:flex-row"
         style={{ gap: 16, alignItems: "flex-start", opacity: fading ? 0 : 1, transition: "opacity 0.35s ease" }}

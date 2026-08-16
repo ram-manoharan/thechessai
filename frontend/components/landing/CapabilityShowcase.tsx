@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MockWindow } from "./MockWindow";
 import { HeroChatDemo } from "./HeroChatDemo";
 
@@ -22,19 +22,55 @@ function parseBoard(rows: string[]): string[][] {
   return rows.map(row => row.split(""));
 }
 
+function squareToRC(square: string): { r: number; c: number } {
+  return { c: FILES.indexOf(square[0]), r: 8 - parseInt(square[1], 10) };
+}
+
 /** Small letter-grid board (uppercase = White, lowercase = Black, "." =
  * empty) — decorative only, not a real position. `rings` highlights squares
- * with a colored pulsing ring. */
+ * with a colored pulsing ring. `move` (optional) slides a piece from one
+ * square to another on top of the static board — without it, a board-state
+ * swap reads as a teleport rather than a move. Re-triggers fresh whenever
+ * move.from/to changes. */
 function MiniBoard({
-  rows, rings, size = 140,
+  rows, rings, size = 156, move,
 }: {
   rows: string[][];
   rings?: Record<string, string>;
   size?: number;
+  move?: { from: string; to: string; piece: string } | null;
 }) {
+  // Imperative DOM mutation (not React state) so the slide is driven by a
+  // plain double-rAF position swap — starting state renders inline below,
+  // the effect only ever writes to the DOM, never triggers a re-render.
+  const pieceRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!move) return;
+    const el = pieceRef.current;
+    if (!el) return;
+    const to = squareToRC(move.to);
+    if (prefersReducedMotion) {
+      el.style.transition = "none";
+      el.style.left = `${to.c * 12.5}%`;
+      el.style.top = `${to.r * 12.5}%`;
+      return;
+    }
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        el.style.transition = "left 0.6s cubic-bezier(0.4,0,0.2,1), top 0.6s cubic-bezier(0.4,0,0.2,1)";
+        el.style.left = `${to.c * 12.5}%`;
+        el.style.top = `${to.r * 12.5}%`;
+      });
+    });
+    return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [move?.from, move?.to, move?.piece]);
+
   return (
     <div
       style={{
+        position: "relative",
         display: "grid",
         gridTemplateColumns: "repeat(8, 1fr)",
         width: size,
@@ -52,6 +88,7 @@ function MiniBoard({
           const isLight = (r + c) % 2 === 0;
           const square = `${FILES[c]}${8 - r}`;
           const ring = rings?.[square];
+          const hidden = move?.from === square;
           return (
             <div
               key={square}
@@ -61,7 +98,7 @@ function MiniBoard({
                 alignItems: "center",
                 justifyContent: "center",
                 background: isLight ? "var(--board-light)" : "var(--board-dark)",
-                fontSize: "clamp(10px, 2.2vw, 16px)",
+                fontSize: "clamp(12px, 2.6vw, 19px)",
                 lineHeight: 1,
                 color: cell === cell.toUpperCase() ? "#f5f5f0" : "#1a1a1a",
                 textShadow: cell === cell.toUpperCase()
@@ -79,11 +116,36 @@ function MiniBoard({
                   }}
                 />
               )}
-              {cell !== "." && PIECE_GLYPH[cell]}
+              {cell !== "." && !hidden && PIECE_GLYPH[cell]}
             </div>
           );
         }),
       )}
+      {move && (() => {
+        const from = squareToRC(move.from);
+        return (
+          <div
+            ref={pieceRef}
+            style={{
+              position: "absolute",
+              width: "12.5%", height: "12.5%",
+              left: `${from.c * 12.5}%`,
+              top: `${from.r * 12.5}%`,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: "clamp(12px, 2.6vw, 19px)",
+              lineHeight: 1,
+              pointerEvents: "none",
+              zIndex: 2,
+              color: move.piece === move.piece.toUpperCase() ? "#f5f5f0" : "#1a1a1a",
+              textShadow: move.piece === move.piece.toUpperCase()
+                ? "0 1px 1px rgba(0,0,0,0.55)"
+                : "0 1px 1px rgba(255,255,255,0.25)",
+            }}
+          >
+            {PIECE_GLYPH[move.piece]}
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -130,30 +192,35 @@ const OPP_AFTER = parseBoard([
   "R..Q.RK.",
 ]);
 
-type OppPhase = "before" | "after" | "result";
+type OppPhase = "before" | "moving" | "after" | "result";
+
+const OPP_MOVE = { from: "f6", to: "g4", piece: "n" };
 
 function OpponentCloneDemo() {
   const [phase, setPhase] = useState<OppPhase>(prefersReducedMotion ? "result" : "before");
   useLoop([
     [0, () => setPhase("before")],
-    [1500, () => setPhase("after")],
-    [1500 + 1700, () => setPhase("result")],
-  ], 1500 + 1700 + 2300);
+    [1400, () => setPhase("moving")],
+    [1400 + 650, () => setPhase("after")],
+    [1400 + 650 + 1600, () => setPhase("result")],
+  ], 1400 + 650 + 1600 + 2200);
 
-  const board = phase === "before" ? OPP_BEFORE : OPP_AFTER;
+  const board = phase === "after" || phase === "result" ? OPP_AFTER : OPP_BEFORE;
   const rings: Record<string, string> | undefined =
     phase === "before" ? { f6: "var(--gold)" } : phase === "after" ? { g4: "var(--gold)" } : undefined;
+  const move = phase === "moving" ? OPP_MOVE : null;
 
   return (
-    <MockWindow label="🧪 Rematch — vs magnus_fan92">
+    <MockWindow label="🧪 Rematch — AI clone of magnus_fan92">
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-        <MiniBoard rows={board} rings={rings} />
+        <MiniBoard rows={board} rings={rings} move={move} />
         <p style={{
           fontSize: 12.5, fontWeight: 700, textAlign: "center", minHeight: 34,
           color: phase === "result" ? "var(--accent-green)" : "var(--text-secondary)",
           margin: 0, lineHeight: 1.5,
         }}>
-          {phase === "before" && "magnus_fan92 to move…"}
+          {phase === "before" && "Their clone, playing their real style…"}
+          {phase === "moving" && "…Ng4"}
           {phase === "after" && "Matched to their real 1847 rating & style"}
           {phase === "result" && "📈 +290cp better than what actually happened"}
         </p>
@@ -164,9 +231,9 @@ function OpponentCloneDemo() {
 
 // ── Card 3: Profile yourself and your opponents ─────────────────────────────
 
-const YOU_SCORES = [78, 52, 71, 66, 40, 60];
-const OPP_SCORES = [88, 35, 60, 74, 30, 48];
-const AXES = ["Tactics", "Endgame", "Opening", "Calc.", "Time", "Position"];
+const YOU_SCORES = [78, 52, 71, 66, 40, 60, 58, 74, 49];
+const OPP_SCORES = [88, 35, 60, 74, 30, 48, 42, 81, 55];
+const AXES = ["Tactics", "Endgame", "Opening", "Calc.", "Time", "Position", "Defense", "Attack", "Consistency"];
 
 function Radar({ scores, color, fillOpacity }: { scores: number[]; color: string; fillOpacity: number }) {
   const cx = 78, cy = 78, R = 54;
@@ -206,7 +273,7 @@ function ProfileDemo() {
   const ringPoints = (pct: number) => AXES.map((_, i) => pointAt(i, R * pct)).map(p => `${p.x},${p.y}`).join(" ");
 
   return (
-    <MockWindow label="◉ Profile">
+    <MockWindow label="◉ Deep Profile — 9 dimensions tracked">
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
         <p style={{ fontSize: 12, fontWeight: 700, color: showOpponent ? "var(--gold)" : "var(--accent-blue)", margin: 0, transition: "color 0.3s ease" }}>
           {showOpponent ? "magnus_fan92's profile" : "Your profile"}
@@ -261,33 +328,33 @@ const PZL_AFTER = parseBoard([
   "...Q.K..",
 ]);
 
-type PzlPhase = "prompt" | "solving" | "result";
+type PzlPhase = "prompt" | "moving" | "result";
+
+const PZL_MOVE = { from: "c3", to: "d5", piece: "N" };
 
 function PuzzleDemo() {
   const [phase, setPhase] = useState<PzlPhase>(prefersReducedMotion ? "result" : "prompt");
   useLoop([
     [0, () => setPhase("prompt")],
-    [1600, () => setPhase("solving")],
-    [1600 + 1100, () => setPhase("result")],
-  ], 1600 + 1100 + 2600);
+    [1400, () => setPhase("moving")],
+    [1400 + 650, () => setPhase("result")],
+  ], 1400 + 650 + 2600);
 
   const board = phase === "result" ? PZL_AFTER : PZL_BEFORE;
-  const rings: Record<string, string> | undefined = phase === "prompt"
-    ? { d5: "var(--clr-mistake)" }
-    : phase === "solving"
-      ? { c3: "var(--gold)", d5: "var(--gold)" }
-      : undefined;
+  const rings: Record<string, string> | undefined =
+    phase === "prompt" ? { d5: "var(--clr-mistake)" } : undefined;
+  const move = phase === "moving" ? PZL_MOVE : null;
 
   return (
-    <MockWindow label="🧩 Puzzle — from your last blunder">
+    <MockWindow label="🧩 Puzzle — built from your recurring mistakes">
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-        <MiniBoard rows={board} rings={rings} />
+        <MiniBoard rows={board} rings={rings} move={move} />
         <p style={{
           fontSize: 12.5, fontWeight: 700, textAlign: "center", minHeight: 34, lineHeight: 1.5, margin: 0,
           color: phase === "result" ? "var(--gold)" : "var(--text-secondary)",
         }}>
-          {phase === "prompt" && "Find the best move for White"}
-          {phase === "solving" && "Nxd5 …"}
+          {phase === "prompt" && "Same tactic that beat you 3 times this month"}
+          {phase === "moving" && "Nxd5 …"}
           {phase === "result" && "◈ Good alternate! Qxd5 was the sharper choice."}
         </p>
       </div>
