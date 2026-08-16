@@ -308,24 +308,24 @@ function ProfileDemo() {
 // ── Card 4: Puzzles curated from your mistakes ──────────────────────────────
 
 const PZL_BEFORE = parseBoard([
-  "....k...",
-  "........",
+  "r...k..r",
+  "ppp..ppp",
   "........",
   "...n....",
   "........",
   "..N.....",
-  "........",
-  "...Q.K..",
+  "PPP..PPP",
+  "R..Q.RK.",
 ]);
 const PZL_AFTER = parseBoard([
-  "....k...",
-  "........",
+  "r...k..r",
+  "ppp..ppp",
   "........",
   "...N....",
   "........",
   "........",
-  "........",
-  "...Q.K..",
+  "PPP..PPP",
+  "R..Q.RK.",
 ]);
 
 type PzlPhase = "prompt" | "moving" | "result";
