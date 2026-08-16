@@ -6,6 +6,7 @@ import { FeatureShowcase } from "@/components/landing/FeatureShowcase";
 import { HeroChatDemo } from "@/components/landing/HeroChatDemo";
 import { HowItWorks } from "@/components/landing/HowItWorks";
 import { PlatformStats } from "@/components/landing/PlatformStats";
+import { DifferentiationTable } from "@/components/landing/DifferentiationTable";
 
 const FEATURES = [
   {
@@ -126,7 +127,7 @@ export default function Home() {
                 background: "var(--clr-best)", borderRadius: "50%",
                 animation: "ai-ready-pulse 2s ease-in-out infinite",
               }} />
-              {"Not just analysis — a rematch."}
+              {"Not another one-shot analyzer"}
             </div>
 
             {/* Display headline */}
@@ -142,12 +143,13 @@ export default function Home() {
                 textWrap: "balance",
               }}
             >
-              Rematch them.<br />
-              <em className="text-gold-gradient not-italic">Not a bot.</em>
+              Most chess AI<br />
+              forgets you.<br />
+              <em className="text-gold-gradient not-italic">Ours doesn&apos;t.</em>
             </h1>
 
             <p
-              className="mb-8 mx-auto"
+              className="mb-10 mx-auto"
               style={{
                 color: "var(--text-secondary)",
                 fontSize: "clamp(15px, 2vw, 18px)",
@@ -155,38 +157,10 @@ export default function Home() {
                 maxWidth: 560,
               }}
             >
-              Import a game and we clone your actual opponent — their rating, their
-              style, the exact mistakes they made — so you can replay the moment that
-              decided it. Every recurring blunder becomes a targeted puzzle, automatically.
+              Every game you feed it makes the next one sharper — recurring mistakes
+              get caught, puzzles get built from your real patterns, and when
+              you&apos;re ready for a rematch, we clone the exact opponent who beat you.
             </p>
-
-            {/* USP pillars — what makes this a rematch, not another blunder-checker */}
-            <div
-              className="flex flex-wrap items-center justify-center gap-2 mb-10 mx-auto"
-              style={{ maxWidth: 620 }}
-            >
-              {[
-                { icon: "🧪", label: "Opponent-accurate replay", sub: "their ELO, style & real mistakes" },
-                { icon: "↻",  label: "Recurrence Engine", sub: "catches a blunder coming back" },
-                { icon: "🧩", label: "Puzzles built from you", sub: "not generic drills" },
-              ].map(p => (
-                <div
-                  key={p.label}
-                  className="inline-flex items-center gap-2 px-3.5 py-2 rounded-full text-left"
-                  style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}
-                >
-                  <span style={{ fontSize: 15 }}>{p.icon}</span>
-                  <span>
-                    <span style={{ display: "block", fontSize: 12.5, fontWeight: 700, color: "var(--text-primary)", lineHeight: 1.3 }}>
-                      {p.label}
-                    </span>
-                    <span style={{ display: "block", fontSize: 10.5, color: "var(--text-muted)", lineHeight: 1.3 }}>
-                      {p.sub}
-                    </span>
-                  </span>
-                </div>
-              ))}
-            </div>
 
             <HeroCTA />
 
@@ -197,6 +171,25 @@ export default function Home() {
             </div>
 
           </div>
+        </section>
+
+        {/* ── Built different: what makes this a compounding trainer, not
+               another one-shot analyzer — the concrete payoff of the hero's
+               "forgets you / ours doesn't" claim ─────────────────────────── */}
+        <section className="max-w-3xl mx-auto px-6 pt-4 pb-16">
+          <Reveal>
+            <div style={{ textAlign: "center", marginBottom: 30 }}>
+              <p style={{ color: "var(--accent-blue)", fontSize: 11, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", marginBottom: 8 }}>
+                Built different
+              </p>
+              <h2 style={{ fontFamily: "var(--font-display)", fontSize: "clamp(20px, 2.5vw, 26px)", fontWeight: 600, color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
+                The difference is memory.
+              </h2>
+            </div>
+          </Reveal>
+          <Reveal delay={0.05}>
+            <DifferentiationTable />
+          </Reveal>
         </section>
 
         {/* ── Platform stats pitch ─────────────────────────────────────── */}
