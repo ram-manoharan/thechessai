@@ -787,6 +787,7 @@ export async function replayMove(params: {
   opponentRating?: number | null;
   errorRateByPhase?: Record<string, number> | null;
   phase?: string | null;
+  opponentName?: string | null;
 }): Promise<ReplayMoveResult> {
   return authedFetch(`${BASE}/api/replay/move`, {
     method: "POST",
@@ -796,6 +797,7 @@ export async function replayMove(params: {
       opponent_rating:      params.opponentRating ?? null,
       error_rate_by_phase:  params.errorRateByPhase ?? null,
       phase:                params.phase ?? null,
+      opponent_name:        params.opponentName ?? null,
     }),
   }) as Promise<ReplayMoveResult>;
 }

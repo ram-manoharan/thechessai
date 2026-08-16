@@ -29,7 +29,8 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
   const startFen = positions[startPly] ?? "";
   const userColorWord: "White" | "Black"     = playerColor === "white" ? "White" : "Black";
   const opponentColorWord: "White" | "Black" = userColorWord === "White" ? "Black" : "White";
-  const opponentName = (opponentColorWord === "White" ? metadata.White : metadata.Black) || opponentColorWord;
+  const opponentNameRaw = opponentColorWord === "White" ? metadata.White : metadata.Black;
+  const opponentName = opponentNameRaw || opponentColorWord;
   const opponentRatingRaw = opponentColorWord === "White" ? metadata.WhiteElo : metadata.BlackElo;
   const opponentRating = opponentRatingRaw ? parseInt(opponentRatingRaw, 10) : null;
 
@@ -127,6 +128,7 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
       opponentRating,
       errorRateByPhase: hasFingerprint ? fingerprint : null,
       phase:            estimatePhase(afterFen),
+      opponentName:     opponentNameRaw || null,
     }).then(res => {
       if (requestIdRef.current !== myRequestId) return; // reset happened meanwhile — discard
       try {
@@ -158,7 +160,7 @@ export function ReplayModal({ startPly, onClose }: { startPly: number; onClose: 
       setError((e as Error).message || "The opponent engine is unavailable right now.");
       setStatus("error");
     });
-  }, [opponentRating, fingerprint, hasFingerprint, soundEnabled]);
+  }, [opponentRating, fingerprint, hasFingerprint, soundEnabled, opponentNameRaw]);
 
   // Shared by direct (non-promotion) drops and by the promotion picker once
   // the user has chosen a piece -- a promotion move can't be committed to

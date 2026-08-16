@@ -1,36 +1,33 @@
 """Mapping between app weakness themes and Lichess puzzle themes.
 
-The Lichess puzzle DB uses 75 fine-grained theme tags per puzzle.
-Our app tracks 12 coarser "weakness" categories from mistake_pattern.
-This module bridges them so daily practice can pull Lichess puzzles that
-target the user's real weaknesses.
+The Lichess puzzle DB uses 75 fine-grained theme tags per puzzle. Our app's
+weakness categories come from chess_analysis.classify_tactical_theme(),
+which only ever returns one of 9 exact strings ("Hanging Piece",
+"Tactics: Fork", "Tactics: Pin", "Tactics: Back Rank",
+"Tactics: Discovered Attack", "King Safety", "Endgame: Technique",
+"Opening Development", "Positional") -- these are also what's stored in
+app.mistake_event.tactical_theme, which is what callers of get_lichess_themes
+actually pass in. THEME_MAP must be keyed on exactly those 9 strings or the
+lookup silently misses (weakness-targeted puzzle selection matching almost
+nothing was a real bug fixed here, not a hypothetical one).
 """
 
-# Our 12 weakness categories → Lichess theme tags
+# Our 9 tactical_theme categories (from classify_tactical_theme) → Lichess theme tags
 THEME_MAP: dict[str, list[str]] = {
-    "Fork":              ["fork"],
-    "Pin":               ["pin"],
-    "Skewer":            ["skewer"],
-    "Discovery":         ["discoveredAttack", "discoveredCheck", "doubleCheck"],
-    "Back Rank":         ["backRankMate"],
-    "Mating Net":        [
-        "mate", "mateIn1", "mateIn2", "mateIn3", "mateIn4", "mateIn5",
-        "smotheredMate", "anastasiaMate", "arabianMate", "bodenMate",
-        "cornerMate", "hookMate", "morphysMate", "operaMate",
-        "epauletteMate", "dovetailMate",
-    ],
-    "Pawn Structure":    ["advancedPawn", "promotion", "underPromotion", "enPassant", "pawnEndgame"],
-    "Endgame Tactics":   [
+    "Hanging Piece":              ["hangingPiece"],
+    "Tactics: Fork":              ["fork"],
+    "Tactics: Pin":               ["pin"],
+    "Tactics: Back Rank":         ["backRankMate"],
+    "Tactics: Discovered Attack": ["discoveredAttack", "discoveredCheck", "doubleCheck"],
+    "King Safety":                ["exposedKing", "kingsideAttack", "queensideAttack", "attackingF2F7"],
+    "Endgame: Technique":         [
         "endgame", "rookEndgame", "queenEndgame", "bishopEndgame",
         "knightEndgame", "pawnEndgame", "queenRookEndgame",
     ],
-    "King Safety":       ["exposedKing", "kingsideAttack", "queensideAttack", "attackingF2F7"],
-    "Piece Coordination": [
-        "xRayAttack", "interference", "deflection", "clearance",
-        "capturingDefender", "trappedPiece", "attraction",
-    ],
-    "Tempo":             ["intermezzo", "quietMove", "zugzwang", "defensiveMove"],
-    "Initiative":        ["crushing", "sacrifice", "advantage", "capturingDefender", "hangingPiece"],
+    "Opening Development":        ["opening"],
+    # Positional is classify_tactical_theme()'s catch-all -- no single sharp
+    # Lichess tag corresponds to it, so this maps to the closest fuzzy match.
+    "Positional":                 ["middlegame", "advantage", "crushing"],
 }
 
 # Reverse: Lichess theme → our weakness category (first match wins)

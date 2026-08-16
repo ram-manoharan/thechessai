@@ -31,7 +31,9 @@ from pydantic import BaseModel
 
 import engine_pool
 import human_engine_pool
+import opponent_profile
 from auth import CurrentUser, get_current_user
+from chess_analysis import classify_tactical_theme
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -55,12 +57,22 @@ _DEVIATION_DEPTH = 10  # shallow/fast -- this only needs "plausible", not exact
 # whatever full-game analysis is already holding the engine."
 _REPLAY_ACQUIRE_TIMEOUT_SECONDS = 3.0
 
+# Ply-based proxy for "opponent is likely running low on real-game clock" --
+# no time control is known at replay start (and simulating only the
+# opponent's clock while the user's own is absent would be incoherent), so
+# this ramps the deviation probability up over the back half of a typical
+# game instead of tracking an actual countdown.
+_TIME_PRESSURE_START_MOVE = 25
+_TIME_PRESSURE_RAMP_MOVES = 20
+_TIME_PRESSURE_MAX_BOOST = 0.25
+
 
 class ReplayMoveRequest(BaseModel):
     fen: str
     opponent_rating: Optional[int] = None
     error_rate_by_phase: Optional[dict[str, float]] = None
     phase: Optional[str] = None
+    opponent_name: Optional[str] = None
 
 
 def _game_state(board: chess.Board) -> dict:
@@ -94,11 +106,21 @@ def _evaluate(board: chess.Board) -> Optional[int]:
     return None
 
 
-def _find_deviation(board: chess.Board, maia_move: chess.Move) -> Optional[chess.Move]:
-    """Best-effort: the worst of Stockfish's top-3 candidates for the side
-    to move, excluding Maia's own pick. Returns None (falls back to Maia)
-    on any failure -- the fingerprint layer is a refinement, never a
-    dependency the whole endpoint should fail over."""
+def _find_deviation(
+    board: chess.Board, maia_move: chess.Move,
+    theme_weights: Optional[dict[str, float]] = None, phase: Optional[str] = None,
+) -> Optional[chess.Move]:
+    """Best-effort: a plausible-but-suboptimal candidate for the side to
+    move, excluding Maia's own pick. Returns None (falls back to Maia) on
+    any failure -- the fingerprint layer is a refinement, never a
+    dependency the whole endpoint should fail over.
+
+    When theme_weights is given (this specific opponent's historical
+    tactical_theme distribution), prefer whichever of Stockfish's existing
+    top-3 candidates lands in a theme this opponent is actually prone to --
+    stays inside the current multi_pv=3 budget rather than expanding the
+    search. Falls back to the plain worst-score pick when no candidate
+    matches a weighted theme, or no profile exists."""
     try:
         with engine_pool.acquire(kind="interactive", timeout=_REPLAY_ACQUIRE_TIMEOUT_SECONDS) as sf:
             lines = engine_pool.cached_analyse(sf, board, depth=_DEVIATION_DEPTH, multi_pv=3)
@@ -125,6 +147,20 @@ def _find_deviation(board: chess.Board, maia_move: chess.Move) -> Optional[chess
     # white-relative score, black wants the highest (best for white = worst
     # for black).
     key = (lambda c: c[1]) if board.turn == chess.WHITE else (lambda c: -c[1])
+
+    if theme_weights:
+        fen = board.fen()
+        themed = []
+        for mv, sc in candidates:
+            try:
+                theme = classify_tactical_theme(fen, mv.uci(), phase or "Middlegame")
+            except Exception:
+                theme = None
+            if theme and theme_weights.get(theme, 0) > 0:
+                themed.append((mv, sc))
+        if themed:
+            return min(themed, key=key)[0]
+
     return min(candidates, key=key)[0]
 
 
@@ -153,18 +189,38 @@ async def replay_move(req: ReplayMoveRequest, user: CurrentUser = Depends(get_cu
         logger.warning("Maia engine crashed handling a replay move.", exc_info=True)
         raise HTTPException(503, "The opponent engine hit an error. Please try again.")
 
+    profile = None
+    if req.opponent_name:
+        profile = await opponent_profile.get_opponent_profile(user.user_id, req.opponent_name)
+
+    # A real, multi-game per-opponent error rate beats the client's
+    # single-game one when we have it; otherwise behavior is identical to
+    # before this profile existed.
+    error_rate_by_phase = req.error_rate_by_phase
+    if profile and profile.get("phase_error_rate"):
+        error_rate_by_phase = profile["phase_error_rate"]
+
+    deviation_prob = 0.0
+    if error_rate_by_phase and req.phase:
+        p = error_rate_by_phase.get(req.phase)
+        if p is not None and p > 0:
+            deviation_prob = p
+
+    if profile and profile.get("time_pressure", {}).get("elevated") and board.fullmove_number >= _TIME_PRESSURE_START_MOVE:
+        ramp = min(1.0, (board.fullmove_number - _TIME_PRESSURE_START_MOVE) / _TIME_PRESSURE_RAMP_MOVES)
+        deviation_prob += _TIME_PRESSURE_MAX_BOOST * ramp
+
     chosen_move = maia_move
     source = "maia"
 
-    if req.error_rate_by_phase and req.phase:
-        p = req.error_rate_by_phase.get(req.phase)
-        if p is not None and p > 0:
-            p = min(MAX_DEVIATION_PROB, max(0.0, p))
-            if random.random() < p:
-                deviation = _find_deviation(board, maia_move)
-                if deviation is not None:
-                    chosen_move = deviation
-                    source = "fingerprint_deviation"
+    if deviation_prob > 0:
+        deviation_prob = min(MAX_DEVIATION_PROB, deviation_prob)
+        if random.random() < deviation_prob:
+            theme_weights = profile.get("theme_distribution") if profile else None
+            deviation = _find_deviation(board, maia_move, theme_weights=theme_weights, phase=req.phase)
+            if deviation is not None:
+                chosen_move = deviation
+                source = "fingerprint_deviation"
 
     move_san = board.san(chosen_move)
     board.push(chosen_move)

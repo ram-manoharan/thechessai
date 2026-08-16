@@ -370,21 +370,49 @@ async def get_puzzle_queue(user: CurrentUser = Depends(get_current_user), limit:
         )
         top_themes = [r["theme"] for r in theme_rows]
 
+        top_cognitive_error = await conn.fetchval(
+            """
+            SELECT cognitive_error_type FROM app.mistake_event
+            WHERE user_id = $1 AND cognitive_error_type IS NOT NULL
+            GROUP BY cognitive_error_type ORDER BY COUNT(*) DESC LIMIT 1
+            """,
+            user.user_id,
+        )
+
         # ── 2. Own-game puzzles due for review ────────────────────────────
+        # LEFT JOIN LATERAL (not a plain join) because mistake_event has no
+        # uniqueness constraint on (user_id, fen_before, best_move_san) --
+        # a plain join could fan out and duplicate rows past LIMIT. Rows
+        # with no linkable mistake_event (puzzle predates the ledger, or
+        # its source game was deleted) fall through unaffected to the
+        # existing theme-match/due-date ordering.
         own_rows = await conn.fetch(
             """
             SELECT sp.fen, sp.best_move_san, sp.continuation, sp.theme, sp.cp_loss, sp.phase,
                    sp.source_white, sp.source_black, sp.source_date,
-                   COALESCE(pp.streak, 0) AS streak
+                   COALESCE(pp.streak, 0) AS streak,
+                   me.is_recurrence, me.cognitive_error_type
             FROM app.saved_puzzle sp
             LEFT JOIN app.puzzle_progress pp ON pp.user_id = sp.user_id AND pp.puzzle_fen = sp.fen
+            LEFT JOIN LATERAL (
+                SELECT
+                    (m.recurred_event_id IS NOT NULL
+                     OR EXISTS (SELECT 1 FROM app.mistake_event later WHERE later.recurred_event_id = m.id)
+                    ) AS is_recurrence,
+                    m.cognitive_error_type
+                FROM app.mistake_event m
+                WHERE m.user_id = sp.user_id AND m.fen_before = sp.fen AND m.best_move_san = sp.best_move_san
+                ORDER BY m.occurred_at DESC LIMIT 1
+            ) me ON TRUE
             WHERE sp.user_id = $1
               AND COALESCE(pp.next_review_at, now()) <= now()
-            ORDER BY (sp.theme = ANY($2::text[])) DESC,
+            ORDER BY COALESCE(me.is_recurrence, FALSE) DESC,
+                     (me.cognitive_error_type IS NOT NULL AND me.cognitive_error_type = $4) DESC,
+                     (sp.theme = ANY($2::text[])) DESC,
                      COALESCE(pp.next_review_at, now()) ASC
             LIMIT $3
             """,
-            user.user_id, top_themes, limit,
+            user.user_id, top_themes, limit, top_cognitive_error,
         )
         puzzles: list[dict] = [
             {
@@ -652,6 +680,68 @@ async def _persist_mistake_events(
         )
     return inserted
 
+
+async def _persist_opponent_mistake_events(
+    conn, tracked_by_user_id: str, game_id: int, player_color: str,
+    opponent_name: Optional[str], moves_data: list, positions: list,
+) -> None:
+    """Same idempotent pattern as _persist_mistake_events, mirrored onto the
+    OPPONENT's side of the board. Kept in a separate table (not user_id rows
+    in mistake_event) since every existing mistake_event reader treats
+    user_id as "who made this mistake" -- opponent errors under the
+    tracker's own user_id would pollute their own stats. No-ops when the
+    opponent has no name (nothing to key the identity on)."""
+    opponent_name = (opponent_name or "").strip()
+    if not opponent_name:
+        return
+    await conn.execute(
+        "DELETE FROM app.opponent_mistake_event WHERE game_id = $1", game_id
+    )
+    opponent_cap = "Black" if player_color.capitalize() == "White" else "White"
+
+    for i, m in enumerate(moves_data):
+        if m.get("color") != opponent_cap:
+            continue
+        classification = m.get("classification", "")
+        if not any(k in classification for k in _FLAGGED_CLASSIFICATIONS):
+            continue
+        fen_before = positions[i] if i < len(positions) else None
+        if not fen_before:
+            continue
+        fen_after = m.get("fen") or (positions[i + 1] if i + 1 < len(positions) else fen_before)
+        move_san = m.get("move_san") or m.get("san", "")
+        if not move_san:
+            continue
+        best_move_san = m.get("best_move_san")
+
+        theme = None
+        try:
+            if best_move_san:
+                best_uci = chess.Board(fen_before).parse_san(best_move_san).uci()
+                theme = classify_tactical_theme(fen_before, best_uci, m.get("phase", "Middlegame"))
+        except Exception:
+            logger.warning("opponent_mistake_event theme classification failed: game=%s ply=%s", game_id, i, exc_info=True)
+
+        try:
+            features = extract_position_features(fen_before, move_san)
+        except Exception:
+            logger.warning("opponent_mistake_event position_features failed: game=%s ply=%s", game_id, i, exc_info=True)
+            features = {}
+
+        await conn.execute(
+            """
+            INSERT INTO app.opponent_mistake_event
+                (tracked_by_user_id, opponent_name, game_id, move_number, color, ply,
+                 fen_before, fen_after, move_san, best_move_san, classification, cp_loss,
+                 phase, tactical_theme, position_features, clock_remaining, elo_band)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17)
+            """,
+            tracked_by_user_id, opponent_name, game_id, m.get("move_number", 0), opponent_cap, i,
+            fen_before, fen_after, move_san, best_move_san, classification, m.get("cp_loss", 0),
+            m.get("phase"), theme, json.dumps(features), m.get("clock_remaining"), None,
+        )
+
+
 class SaveGameRequest(BaseModel):
     pgn: str
     white: Optional[str] = None
@@ -705,6 +795,11 @@ async def save_analyzed_game(req: SaveGameRequest, user: CurrentUser = Depends(g
             game_id = row["id"]
             new_events = await _persist_mistake_events(
                 conn, user.user_id, game_id, req.player_color, req.estimated_elo,
+                req.payload.get("moves_data") or [], req.payload.get("positions") or [],
+            )
+            opponent_name = req.black if req.player_color.capitalize() == "White" else req.white
+            await _persist_opponent_mistake_events(
+                conn, user.user_id, game_id, req.player_color, opponent_name,
                 req.payload.get("moves_data") or [], req.payload.get("positions") or [],
             )
 
