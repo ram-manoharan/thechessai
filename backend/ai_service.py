@@ -2,6 +2,7 @@ import os
 import re
 import logging
 from typing import Optional
+import chess
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -134,6 +135,24 @@ def elo_band(estimated_elo: Optional[int]) -> str:
 
 def _band_directives(estimated_elo: Optional[int]) -> str:
     return _ELO_BAND_DIRECTIVES[elo_band(estimated_elo)]
+
+
+# ── Anti-genericness contract ───────────────────────────────────────────────
+# The single biggest quality complaint about AI chess coaching (this app
+# included, per user testing) is filler that would apply to almost any
+# position: "this improves your position", "increases piece activity",
+# "creates chances". A one-line "be specific" instruction with a single
+# inline example wasn't enough to reliably suppress this in a 70B model —
+# it needs a standing contract restated in every coaching prompt, an
+# explicit banned-phrase list, and a silent self-check step before the
+# model commits to a claim.
+_SPECIFICITY_RULES = """SPECIFICITY CONTRACT — every sentence you write must be checkable against the FEN given, not generic chess wisdom:
+- Never write filler that would apply to almost any position: "improves your position", "increases piece activity", "better coordination", "creates chances", "a solid move", "keeps your options open", "maintains the balance", "follows opening principles", "gives you more control of the center" (without naming the square). If a claim would survive being pasted into a random other position's explanation unchanged, it's too generic — delete it and name the actual mechanism instead.
+- Name the exact piece and square for every claim: which piece is attacked, which square is weak, what the resulting threat, pin, fork, or material count actually is.
+- State the concrete consequence, not just the label. Don't stop at "this hangs a piece" — say what recaptures it and what it costs. Don't stop at "this is a fork" — say which two pieces are forked and which one is lost.
+- Silently verify your claim against the position before answering: which piece sits on the square you're naming, what defends or attacks it, what the line actually is. Do not show this checking work — give only the final answer — but never state something the FEN contradicts.
+- Being a good coach means being honest about trade-offs, not just declaring winners: when a move has a real downside or gives up something, say so briefly instead of pretending it's flawless. When a bad move had genuine surface appeal, name what made it tempting before explaining why it fails — that's more useful to a learner than "this is just wrong."
+"""
 
 
 class AIService:
@@ -359,8 +378,9 @@ class AIService:
 
             prompt = f"""You are the world's best chess coach — a grandmaster who has trained world champions. A student just played this game and needs your detailed, actionable coaching report. Return ONLY a valid JSON object (no markdown fences, no text before or after).
 
+{_SPECIFICITY_RULES}
 {directives}
-Apply these AUDIENCE rules to every text field below — "note", "assessment", "what_happened", "best_explanation", "principle", "detail", "why", "coach_note", etc. all need to match this player's level ({band}), not a generic advanced-player voice.
+Apply these AUDIENCE rules AND the SPECIFICITY CONTRACT above to every text field below — "note", "assessment", "what_happened", "best_explanation", "principle", "detail", "why", "coach_note", etc. all need to match this player's level ({band}) and name concrete pieces/squares, not a generic advanced-player voice reciting proverbs.
 
 GAME PGN:
 {pgn_text}
@@ -399,8 +419,8 @@ Return this exact JSON (all fields required):
       "cp_loss": 120,
       "best": "Ke1",
       "principle": "The chess principle violated or demonstrated — e.g. 'Knights on the rim are dim'",
-      "what_happened": "1-2 sentences: the concrete problem this move created",
-      "best_explanation": "1-2 sentences: why the best move was superior and what it achieves"
+      "what_happened": "1-2 sentences: the concrete problem this move created — name the exact piece/square, per the SPECIFICITY CONTRACT. If the move had surface appeal, say so in a half-clause before the refutation.",
+      "best_explanation": "1-2 sentences: exactly what the best move achieves (threat/square/material) and, if there's a real trade-off, what it costs — per the SPECIFICITY CONTRACT"
     }}
   ],
   "tactical_patterns": [
@@ -447,7 +467,7 @@ Requirements:
             response = self._create_completion(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=2048,
+                max_tokens=2560,
                 temperature=0.0,
                 seed=42,
             )
@@ -505,15 +525,40 @@ Requirements:
                 "when they made this move. Treat this primarily as a time-pressure error, not a calculation "
                 "gap — say so explicitly, and don't scold a rushed decision as harshly as a slow blunder."
             )
-        prompt = f"""You are a grandmaster chess coach explaining a specific position to a {elo_tag} player.
 
+        # Deterministic grounding hint — a code-verified tactical pattern
+        # check (chess_analysis.classify_tactical_theme), not another LLM
+        # guess. Deferred import: chess_analysis imports AIService at module
+        # load time, so importing it back at module level here would be
+        # circular; by call time both modules are already fully loaded, so
+        # this local import is safe. Fails open to no hint if anything about
+        # the FEN/SAN is malformed — this is an aid, never a hard dependency.
+        theme_hint = None
+        try:
+            from chess_analysis import classify_tactical_theme
+            board = chess.Board(fen)
+            best_move_uci = board.parse_san(best_move).uci()
+            theme_hint = classify_tactical_theme(fen, best_move_uci, phase)
+        except Exception:
+            pass
+        theme_hint_note = (
+            f"\nCODE-VERIFIED PATTERN CHECK: a deterministic board analyzer flags this position as "
+            f"'{theme_hint}'. Use this as a starting hint, not gospel — verify it against the FEN yourself, "
+            "and override it in your \"theme\" answer if your own reading of the position finds something "
+            "more precise (the checker only catches single-move patterns, not multi-move combinations)."
+            if theme_hint else ""
+        )
+
+        prompt = f"""You are a sharp, engaging grandmaster chess coach explaining a specific position to a {elo_tag} player. Your job is to make them genuinely understand THIS position, not recite chess proverbs.
+
+{_SPECIFICITY_RULES}
 {directives}
 
 FEN (position BEFORE the player's move): {fen}
 Player is: {player_color}
 Game phase: {phase}
 Position evaluation: {position_context} position
-{time_note}
+{time_note}{theme_hint_note}
 The player played:   {played_move}  (this was a {cp_loss}-centipawn error)
 The engine suggests: {best_move}
 {f'''
@@ -523,10 +568,10 @@ Assess this guess in the "reasoning_feedback" field: say plainly whether they id
 
 Return ONLY valid JSON — no markdown fences, no extra text:
 {{
-  "why_bad": "Follow the AUDIENCE rules above for length/vocabulary. Be SPECIFIC to this position — name the exact piece, square, or weakness. For example: 'This move allows Rxd7, winning the rook on d7.' or 'After Nf5, the knight on e4 becomes undefended.' Do NOT write generic chess advice.",
-  "why_good": "Follow the AUDIENCE rules above for length/vocabulary. Be SPECIFIC about what {best_move} achieves in THIS position. Name the resulting threat, square control, or material gain. For example: 'Nd4 threatens both Nxf5 and Nxb5, winning material in either case.' Do NOT write generic chess advice.",
+  "why_bad": "Apply the SPECIFICITY CONTRACT and the AUDIENCE rules above. First work out which of these two shapes actually fits — do not force the wrong one: (a) {played_move} ACTIVELY CREATES a problem — say exactly what it hangs, allows, or weakens, naming the real piece/square involved and the opponent's concrete reply. (b) {played_move} is safe by itself but PASSES UP a better chance — if it doesn't lose or allow anything, say that plainly, then say what winning or improving opportunity it let slip instead ('{played_move} doesn't lose anything on its own, but it lets {best_move} slip — [name what {best_move} would have won]'). Shape (b) is common and just as important as (a); never invent a threat, attacker, or recapture that isn't actually on the board to force shape (a) when (b) is what's really happening. If {played_move} had genuine surface appeal, name it in a half-clause first. Never end on a vague label alone.",
+  "why_good": "Apply the SPECIFICITY CONTRACT and the AUDIENCE rules above. Name exactly what {best_move} achieves — the resulting threat, square, or material gain — and if it carries a real trade-off (gives up a pawn, weakens a square, requires precise follow-up), say so in one clause. If there is truly no downside, say so plainly rather than inventing one. Example shape: 'Nd4 threatens both Nxf5 and Nxb5, winning material either way — the only cost is the knight is briefly undefended on d4, but Black has no way to exploit it in time.'",
   "theme": "The primary chess concept — choose ONE of: Tactics: Fork, Tactics: Pin, Tactics: Skewer, Tactics: Discovered Attack, Tactics: Back Rank, Tactics: Deflection, Tactics: Overloading, King Safety, Piece Activity, Pawn Structure, Endgame: Opposition, Endgame: Promotion, Endgame: Rook Technique, Opening Development, Prophylaxis, Coordination, Calculation Error.",
-  "elo_note": "One short sentence — the key lesson to remember, phrased at the AUDIENCE level above."{f''',
+  "elo_note": "One short sentence — a lesson tied to what ACTUALLY happened in this position (name the piece/square), not a generic reminder like 'always check for hanging pieces'. Phrased at the AUDIENCE level above."{f''',
   "reasoning_feedback": "Assessment of the player's own guess (see above), 1-3 sentences, phrased at the AUDIENCE level."''' if player_reasoning else ''}
 }}"""
 
@@ -534,7 +579,7 @@ Return ONLY valid JSON — no markdown fences, no extra text:
             response = self._create_completion(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=512,
+                max_tokens=768,
                 temperature=0.1,
                 seed=42,
             )
@@ -575,23 +620,42 @@ Return ONLY valid JSON — no markdown fences, no extra text:
             return "AI unavailable."
 
         directives = _band_directives(estimated_elo)
-        system_prompt = f"""You are a grandmaster chess coach in an ongoing conversation with a student about ONE specific chess position. Stay strictly grounded in this position — never invent moves or evaluations inconsistent with the FEN below.
 
+        # Ground-truth legal-move list — settles "is X even legal here"
+        # definitively instead of leaving a smaller model to calculate
+        # legality itself mid-answer, which is exactly the kind of thing
+        # that produces a confident-sounding wrong answer.
+        legal_moves_note = ""
+        try:
+            board = chess.Board(fen)
+            legal_sans = sorted(board.san(m) for m in board.legal_moves)
+            legal_moves_note = f"\nLEGAL MOVES FROM THIS POSITION (ground truth — anything not in this list is illegal): {', '.join(legal_sans)}"
+        except Exception:
+            pass
+
+        system_prompt = f"""You are a sharp, engaging grandmaster chess coach in an ongoing conversation with a student about ONE specific chess position. You're not a search engine reciting facts — you're teaching, so make your reasoning easy to follow and worth reading. Stay strictly grounded in this position — never invent moves or evaluations inconsistent with the FEN below.
+
+{_SPECIFICITY_RULES}
 {directives}
 
 FEN: {fen}
 Player to move: {player_color}
 The played move was: {played_move}
-The engine's recommended move was: {best_move}
+The engine's recommended move was: {best_move}{legal_moves_note}
 
-Answer the student's questions about this position conversationally, in plain text (never JSON, never markdown fences). Keep answers to 2-4 sentences unless they explicitly ask for a longer line. If asked "what if I played X instead", first make sure X is a legal move from this FEN — if you're unsure a line is sound, say so plainly rather than inventing a confident-sounding wrong answer."""
+HOW TO ANSWER:
+- Ground every claim in the FEN — name the actual pieces and squares involved, per the SPECIFICITY CONTRACT above.
+- If asked "what if I played X instead": check X against the LEGAL MOVES list above first. If it's not on the list, say plainly that it's not a legal move here (and why, if obvious — e.g. the piece can't reach that square, or it's pinned) rather than analyzing a fictional line. If it is legal, give a concrete verdict — what it wins, loses, or allows — not just "that's also possible."
+- When comparing two or more moves (the played move vs. the engine's move, or two moves the student proposes), lead with your verdict in one line, then back it up with the concrete reason, then — only if there's a genuine trade-off — note briefly what the "losing" option still had going for it. Don't manufacture a downside that isn't really there.
+- Plain text only — never JSON, never markdown fences, no bullet characters (this renders in a plain chat bubble, asterisks and dashes would show up literally).
+- Default to 2-4 sentences. You may go up to about 6 sentences, or two short paragraphs, when the question genuinely requires comparing multiple lines — don't pad a simple question to hit a length target, and don't truncate a real comparison to hit a short one."""
 
         messages = [{"role": "system", "content": system_prompt}] + history[-10:]
         try:
             response = self._create_completion(
                 model=self.model_name,
                 messages=messages,
-                max_tokens=400,
+                max_tokens=600,
                 temperature=0.3,
             )
             return response.choices[0].message.content.strip()
