@@ -2,11 +2,9 @@ import { Navbar } from "@/components/Navbar";
 import { NeuralCanvas } from "@/components/NeuralCanvas";
 import { HeroCTA } from "@/components/landing/HeroCTA";
 import { Reveal } from "@/components/landing/Reveal";
-import { FeatureShowcase } from "@/components/landing/FeatureShowcase";
-import { HeroChatDemo } from "@/components/landing/HeroChatDemo";
 import { HowItWorks } from "@/components/landing/HowItWorks";
 import { PlatformStats } from "@/components/landing/PlatformStats";
-import { DifferentiationTable } from "@/components/landing/DifferentiationTable";
+import { CapabilityShowcase } from "@/components/landing/CapabilityShowcase";
 
 const FEATURES = [
   {
@@ -127,7 +125,7 @@ export default function Home() {
                 background: "var(--clr-best)", borderRadius: "50%",
                 animation: "ai-ready-pulse 2s ease-in-out infinite",
               }} />
-              {"Not another one-shot analyzer"}
+              {"Introducing the Recurrence Engine"}
             </div>
 
             {/* Display headline */}
@@ -143,9 +141,8 @@ export default function Home() {
                 textWrap: "balance",
               }}
             >
-              Most chess AI<br />
-              forgets you.<br />
-              <em className="text-gold-gradient not-italic">Ours doesn&apos;t.</em>
+              Train different.<br />
+              <em className="text-gold-gradient not-italic">Fix mistakes faster.</em>
             </h1>
 
             <p
@@ -164,31 +161,25 @@ export default function Home() {
 
             <HeroCTA />
 
-            <div className="mt-14 mx-auto text-left" style={{ maxWidth: 480 }}>
-              <Reveal delay={0.15}>
-                <HeroChatDemo />
-              </Reveal>
-            </div>
-
           </div>
         </section>
 
-        {/* ── Built different: what makes this a compounding trainer, not
-               another one-shot analyzer — the concrete payoff of the hero's
-               "forgets you / ours doesn't" claim ─────────────────────────── */}
-        <section className="max-w-3xl mx-auto px-6 pt-4 pb-16">
+        {/* ── The Recurrence Engine: four parallel, always-running demos —
+               shown rather than argued, and named rather than positioned
+               against anything else ───────────────────────────────────── */}
+        <section className="max-w-5xl mx-auto px-6 pt-4 pb-16">
           <Reveal>
             <div style={{ textAlign: "center", marginBottom: 30 }}>
               <p style={{ color: "var(--accent-blue)", fontSize: 11, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", marginBottom: 8 }}>
-                Built different
+                The Recurrence Engine
               </p>
               <h2 style={{ fontFamily: "var(--font-display)", fontSize: "clamp(20px, 2.5vw, 26px)", fontWeight: 600, color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
-                The difference is memory.
+                Memory, built in.
               </h2>
             </div>
           </Reveal>
           <Reveal delay={0.05}>
-            <DifferentiationTable />
+            <CapabilityShowcase />
           </Reveal>
         </section>
 
@@ -213,20 +204,6 @@ export default function Home() {
           </Reveal>
 
           <HowItWorks />
-        </section>
-
-        {/* ── Divider ────────────────────────────────────────────────────── */}
-        <div className="max-w-4xl mx-auto px-6">
-          <div className="divider-gold" />
-        </div>
-
-        {/* ── Feature showcase: one animated, tabbed demo instead of three
-               stacked static sections repeating what "How it works" and the
-               capability grid already say ─────────────────────────────── */}
-        <section className="max-w-5xl mx-auto px-6 py-20">
-          <Reveal>
-            <FeatureShowcase />
-          </Reveal>
         </section>
 
         {/* ── Divider ────────────────────────────────────────────────────── */}
