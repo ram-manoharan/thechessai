@@ -30,10 +30,10 @@ const PIPELINE = [
     border: "1px solid rgba(91,142,245,0.28)",
   },
   {
-    icon: "🧩",
+    icon: "🧪",
     step: "04",
-    title: "Study, solve, replay it",
-    desc: "Every mistake becomes a puzzle — or a rematch against an AI built to play like the opponent who beat you.",
+    title: "Rematch the opponent",
+    desc: "Land on your blunder and face an AI clone of them — matched to their rating, style, and the real mistakes they made in this exact game.",
     color: "var(--gold)",
     bg: "var(--gold-subtle)",
     border: "1px solid var(--gold-border)",
@@ -48,10 +48,10 @@ const PIPELINE = [
     border: "1px solid rgba(91,142,245,0.28)",
   },
   {
-    icon: "🎯",
+    icon: "↻",
     step: "06",
-    title: "Know what to work on",
-    desc: "Your top recurring mistake, weakest phase, and a focus plan — all built from your own games.",
+    title: "The Recurrence Engine kicks in",
+    desc: "When a mistake repeats across games, we catch it and turn it into a puzzle built from your real patterns — not generic drills.",
     color: "var(--gold)",
     bg: "var(--gold-subtle)",
     border: "1px solid var(--gold-border)",
@@ -178,7 +178,7 @@ export function HowItWorks() {
         </span>
         <p style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6, maxWidth: 560 }}>
           <strong style={{ color: "var(--text-primary)" }}>Repeat it with your next game.</strong>{" "}
-          This isn&apos;t a one-time report — it&apos;s a loop. The more games you feed it, the sharper your profile gets, and the faster you improve.
+          This isn&apos;t a one-time report — it&apos;s the Recurrence Engine at work. The more games you feed it, the sharper your profile gets, and the faster you improve.
         </p>
       </div>
     </div>

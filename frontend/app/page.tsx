@@ -126,7 +126,7 @@ export default function Home() {
                 background: "var(--clr-best)", borderRadius: "50%",
                 animation: "ai-ready-pulse 2s ease-in-out infinite",
               }} />
-              {"AI Ready · Stockfish · Deep Analysis"}
+              {"Not just analysis — a rematch."}
             </div>
 
             {/* Display headline */}
@@ -142,23 +142,51 @@ export default function Home() {
                 textWrap: "balance",
               }}
             >
-              Every move tells<br />
-              <em className="text-gold-gradient not-italic">a story.</em>
+              Rematch them.<br />
+              <em className="text-gold-gradient not-italic">Not a bot.</em>
             </h1>
 
             <p
-              className="mb-10 mx-auto"
+              className="mb-8 mx-auto"
               style={{
                 color: "var(--text-secondary)",
                 fontSize: "clamp(15px, 2vw, 18px)",
                 lineHeight: 1.65,
-                maxWidth: 520,
+                maxWidth: 560,
               }}
             >
-              Sign in free, import a game from Lichess or Chess.com, and get instant
-              Stockfish analysis, an interactive Study to drill your mistakes, and a
-              profile that learns how you actually play.
+              Import a game and we clone your actual opponent — their rating, their
+              style, the exact mistakes they made — so you can replay the moment that
+              decided it. Every recurring blunder becomes a targeted puzzle, automatically.
             </p>
+
+            {/* USP pillars — what makes this a rematch, not another blunder-checker */}
+            <div
+              className="flex flex-wrap items-center justify-center gap-2 mb-10 mx-auto"
+              style={{ maxWidth: 620 }}
+            >
+              {[
+                { icon: "🧪", label: "Opponent-accurate replay", sub: "their ELO, style & real mistakes" },
+                { icon: "↻",  label: "Recurrence Engine", sub: "catches a blunder coming back" },
+                { icon: "🧩", label: "Puzzles built from you", sub: "not generic drills" },
+              ].map(p => (
+                <div
+                  key={p.label}
+                  className="inline-flex items-center gap-2 px-3.5 py-2 rounded-full text-left"
+                  style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}
+                >
+                  <span style={{ fontSize: 15 }}>{p.icon}</span>
+                  <span>
+                    <span style={{ display: "block", fontSize: 12.5, fontWeight: 700, color: "var(--text-primary)", lineHeight: 1.3 }}>
+                      {p.label}
+                    </span>
+                    <span style={{ display: "block", fontSize: 10.5, color: "var(--text-muted)", lineHeight: 1.3 }}>
+                      {p.sub}
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
 
             <HeroCTA />
 
