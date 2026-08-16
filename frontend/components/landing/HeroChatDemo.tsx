@@ -65,6 +65,7 @@ function MiniBoard({ highlightSquare }: { highlightSquare: string }) {
       style={{
         display: "grid",
         gridTemplateColumns: "repeat(8, 1fr)",
+        gridTemplateRows: "repeat(8, 1fr)",
         width: "100%",
         aspectRatio: "1 / 1",
         borderRadius: 8,
