@@ -231,6 +231,11 @@ class JobStatusResponse(BaseModel):
     # without waiting on the whole job, the same two-stage reveal
     # /game/stream gave via SSE, just polled instead of pushed.
     moves_ready: bool = False
+    # Per-move Stockfish progress while the job is still running -- absent
+    # (None) before the first move finishes, and no longer meaningful once
+    # moves_ready flips true (the frontend should treat that as 100%).
+    current: Optional[int] = None
+    total: Optional[int] = None
     metadata: Optional[dict] = None
     positions: Optional[list] = None
     opening: Optional[dict] = None
@@ -284,6 +289,8 @@ def get_game_analysis_status(job_id: str):
     return JobStatusResponse(
         status=str(rq_status),
         moves_ready=moves_ready,
+        current=meta.get("current"),
+        total=meta.get("total"),
         metadata=meta.get("metadata"),
         positions=meta.get("positions"),
         opening=meta.get("opening"),

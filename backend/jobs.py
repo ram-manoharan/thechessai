@@ -112,8 +112,17 @@ def run_full_game_analysis(pgn: str, player_color: str, ai_report: bool, kid_mod
     positions = _build_positions(pgn)
     metadata = _parse_metadata(pgn)
 
+    def _report_progress(current: int, total: int):
+        # Best-effort -- if two engine-pool worker threads race here (only
+        # possible when engine_pool's POOL_SIZE > 1), last-write-wins on the
+        # meta write is fine for a progress readout; it self-corrects on the
+        # very next callback a moment later.
+        _set_meta(stage="analyzing", current=current, total=total)
+
     stockfish = StockfishService(depth=12)
-    moves_data = stockfish.analyze_game_moves(pgn, player_color, depth=12)
+    moves_data = stockfish.analyze_game_moves(
+        pgn, player_color, depth=12, progress_callback=_report_progress,
+    )
 
     if not moves_data:
         raise AnalysisNoMovesError(

@@ -9,6 +9,7 @@ import { Navbar } from "@/components/Navbar";
 import { ImportPanel } from "@/components/ImportPanel";
 import { Board } from "@/components/Board";
 import { MoveList } from "@/components/MoveList";
+import { AnalysisProgress } from "@/components/AnalysisProgress";
 import { EvalBar } from "@/components/EvalBar";
 import { NavControls } from "@/components/NavControls";
 import { EvalGraph } from "@/components/EvalGraph";
@@ -552,6 +553,7 @@ function AnalyzePageContent() {
   const [toast, setToast]           = useState("");
   const [rightTab, setRightTab]     = useState<"moves" | "eval" | "time" | "study">("moves");
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [analysisProgress, setAnalysisProgress] = useState<{ current: number; total: number } | null>(null);
   const hasClock = useMemo(() => movesData.some(m => m.clock_remaining != null), [movesData]);
 
   // Opening a game from /dashboard (?gameId=123) — pure hydration from the
@@ -614,6 +616,11 @@ function AnalyzePageContent() {
 
     setAnalyzing(true);
     setError(null);
+    // Resetting local UI state at the start of a new analysis run, same as
+    // the Zustand setAnalyzing/setError resets right above (those just
+    // don't trip this rule since they're store actions, not useState setters).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setAnalysisProgress(null);
 
     stopRef.current = pollAnalysis(
       pgn,
@@ -660,6 +667,7 @@ function AnalyzePageContent() {
       (msg) => { setError(msg); setAnalyzing(false); },
       kidMode,
       (data) => { setKidCommentaries(data); },
+      (current, total) => { setAnalysisProgress({ current, total }); },
     );
 
     return () => stopRef.current?.();
@@ -932,7 +940,11 @@ function AnalyzePageContent() {
               {rightTab === "moves" && (
                 <>
                   <MiniStatsStrip />
-                  <MoveList fillHeight seamless />
+                  {analyzing && movesData.length === 0 ? (
+                    <AnalysisProgress current={analysisProgress?.current} total={analysisProgress?.total} />
+                  ) : (
+                    <MoveList fillHeight seamless />
+                  )}
                 </>
               )}
               {rightTab === "study" && (

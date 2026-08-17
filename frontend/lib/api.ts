@@ -228,6 +228,8 @@ export function streamAnalysis(
 type JobStatusBody = {
   status: string;
   moves_ready: boolean;
+  current?: number | null;
+  total?: number | null;
   metadata?: GameMetadata | null;
   positions?: string[] | null;
   opening?: Opening | null;
@@ -273,6 +275,11 @@ export function pollAnalysis(
   onError: (msg: string) => void,
   kidMode = false,
   onKidCommentaries?: (data: Record<number, KidMoveCommentary>) => void,
+  // Per-move Stockfish progress while the job is still queued/running --
+  // only fires while polling the job queue (the streamAnalysis() fallback
+  // has no equivalent signal, so callers should treat "never called" as
+  // "no real progress available" rather than "still at 0").
+  onProgress?: (current: number, total: number) => void,
 ) {
   let cancelled = false;
   let fellBackCleanup: (() => void) | null = null;
@@ -330,6 +337,10 @@ export function pollAnalysis(
       consecutivePollErrors = 0;
 
       if ("failed" in result) { onError(result.detail); return; } // the job itself genuinely failed -- final, not retryable
+
+      if (!movesDelivered && onProgress && typeof result.current === "number" && typeof result.total === "number") {
+        onProgress(result.current, result.total);
+      }
 
       if (!movesDelivered && !result.moves_ready && Date.now() - startedAt > NO_PROGRESS_FALLBACK_MS) {
         fallBackToStream();
