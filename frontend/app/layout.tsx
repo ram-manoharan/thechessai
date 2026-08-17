@@ -4,6 +4,7 @@ import { ThemeProvider } from "@/lib/theme";
 import { AuthProvider } from "@/components/AuthProvider";
 import { OnboardingPrompt } from "@/components/OnboardingPrompt";
 import { FeedbackWidget } from "@/components/FeedbackWidget";
+import { PageViewTracker } from "@/components/PageViewTracker";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -47,6 +48,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             {children}
             <OnboardingPrompt />
             <FeedbackWidget />
+            <PageViewTracker />
           </ThemeProvider>
         </AuthProvider>
       </body>

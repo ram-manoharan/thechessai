@@ -14,7 +14,7 @@ import os
 from typing import Optional
 
 import jwt
-from fastapi import Header, HTTPException
+from fastapi import Depends, Header, HTTPException
 
 AUDIENCE = "chessai-backend"
 ISSUER = "chessai-frontend"
@@ -77,3 +77,22 @@ async def get_current_user_optional(authorization: Optional[str] = Header(None))
     except (HTTPException, jwt.InvalidTokenError):
         return None
     return CurrentUser(user_id=payload["sub"], email=payload.get("email"))
+
+
+def _admin_user_ids() -> set[str]:
+    raw = os.environ.get("ADMIN_USER_IDS", "")
+    return {uid.strip() for uid in raw.split(",") if uid.strip()}
+
+
+async def require_admin(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    """Gates the admin dashboard's backend endpoints. Deliberately keyed on
+    Prisma user id (ADMIN_USER_IDS, comma-separated), not email — a
+    username/password signup never sets `email` at all (see
+    app/api/auth/register/route.ts), so an email-based check would silently
+    exclude exactly the accounts most likely to be the site owner's. This is
+    a defense-in-depth backstop, not the primary discovery UX — that's
+    frontend/app/admin/page.tsx, which shows a rejected user their own id
+    directly on the page."""
+    if user.user_id not in _admin_user_ids():
+        raise HTTPException(403, "Not an admin.")
+    return user

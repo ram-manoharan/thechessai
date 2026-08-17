@@ -896,6 +896,86 @@ export async function validateScoresheetMoves(
   });
 }
 
+// ── Page-view tracking ───────────────────────────────────────────────────────
+
+/** Fire-and-forget -- a tracking beacon failing should never surface to the
+ * visitor or block navigation, so this deliberately swallows errors instead
+ * of throwing (unlike apiFetch's normal behaviour). */
+export function trackPageView(path: string, referrer?: string): void {
+  optionalAuthedFetch(`${BASE}/api/track/pageview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, referrer }),
+  }).catch(() => {});
+}
+
+// ── Admin dashboard ──────────────────────────────────────────────────────────
+// All three hit FastAPI's app.* aggregates (games/profiles/puzzles/feedback/
+// pageviews); the user list is a separate call to a Next.js route instead
+// (see app/api/admin/users/route.ts) since public.users is Prisma-owned.
+// Every call here is authedFetch, not optionalAuthedFetch -- an admin
+// endpoint has no meaningful anonymous behavior, so a missing session should
+// throw immediately rather than silently proceed unauthenticated.
+
+export type AdminOverview = {
+  games_analyzed: number;
+  profiles_generated: number;
+  puzzles_solved: number;
+  feedback_count: number;
+  feedback_avg_rating: number | null;
+  pageviews_total: number;
+  pageviews_today: number;
+  pageviews_7d: number;
+};
+
+export async function getAdminOverview(): Promise<AdminOverview> {
+  return authedFetch(`${BASE}/api/admin/overview`);
+}
+
+export type AdminFeedbackItem = {
+  id: number;
+  user_id: string | null;
+  email: string | null;
+  rating: number | null;
+  message: string;
+  page_path: string | null;
+  created_at: string;
+};
+
+export async function getAdminFeedback(limit = 100): Promise<{ feedback: AdminFeedbackItem[] }> {
+  return authedFetch(`${BASE}/api/admin/feedback?limit=${limit}`);
+}
+
+export type AdminPageviews = {
+  top_paths: { path: string; views: number }[];
+  daily: { day: string; views: number }[];
+};
+
+export async function getAdminPageviews(): Promise<AdminPageviews> {
+  return authedFetch(`${BASE}/api/admin/pageviews`);
+}
+
+export type AdminUser = {
+  id: string;
+  name: string | null;
+  username: string | null;
+  email: string | null;
+  created_at: string;
+  sign_in_method: string;
+  lichess_username: string | null;
+  chesscom_username: string | null;
+};
+
+/** Hits the Next.js route, not FastAPI -- public.users is Prisma-owned. */
+export async function getAdminUsers(): Promise<{ total: number; users: AdminUser[] }> {
+  const res = await fetch("/api/admin/users");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /** Split a multi-game PGN blob into individual game strings. */
