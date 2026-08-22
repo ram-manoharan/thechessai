@@ -612,7 +612,13 @@ Requirements:
             response = self._create_completion(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=3200,  # extra headroom for Claude's adaptive thinking on top of this large JSON schema
+                # Verified live: 3200 was NOT thinking-token contention (already
+                # disabled in _anthropic_completion) -- Claude's own completion
+                # for this schema (verdict, phase grades, opening+resources,
+                # 3-5 key_moments, tactical_patterns, strengths/weaknesses,
+                # study_plan, checklist, priorities, coach_note) genuinely runs
+                # longer than the old provider's, and got cut off mid-string.
+                max_tokens=6500,
                 temperature=0.0,
                 seed=42,
             )

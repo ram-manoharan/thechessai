@@ -11,15 +11,25 @@ import { BoardEditor } from "@/components/coach/BoardEditor";
 import { CoachChat } from "@/components/coach/CoachChat";
 import { evaluateCandidateMoves, discussPosition, type CandidateMove, type ChatMessage } from "@/lib/api";
 
-type DiscussContext = { moveHistorySoFar?: string[] };
-
 type Stage =
   | { kind: "choose" }
   | { kind: "fen-input" }
   | { kind: "game-input" }
   | { kind: "game-step"; pgn: string }
   | { kind: "setup" }
-  | { kind: "discussing"; fen: string; context: DiscussContext };
+  | {
+      kind: "discussing";
+      // positions[0] is the anchor position the user loaded; each entry
+      // after that is one move played on the board during the chat.
+      // exploredSans tracks the SAN for each of those (positions.length
+      // === exploredSans.length + 1 always). originalMoveHistory is the
+      // move list from the game-load path (undefined for FEN/setup), kept
+      // separate from exploredSans so "reset to original position" can
+      // restore exactly the pre-exploration state.
+      positions: string[];
+      exploredSans: string[];
+      originalMoveHistory?: string[];
+    };
 
 /** Mate scores from analyze_position are relative to the side to move —
  * flip to a White-POV cp-like magnitude (±9999, matching the existing
@@ -76,11 +86,15 @@ export default function CoachPage() {
   const [flipped, setFlipped] = useState(false);
   const [engine, setEngine] = useState<{ cp: number | null; topMoves: CandidateMove[] } | null>(null);
 
-  const fen = stage.kind === "discussing" ? stage.fen : null;
+  const fen = stage.kind === "discussing" ? stage.positions[stage.positions.length - 1] : null;
   const sideToMove: "w" | "b" = fen?.split(" ")[1] === "b" ? "b" : "w";
+  const fullMoveHistory = stage.kind === "discussing"
+    ? [...(stage.originalMoveHistory ?? []), ...stage.exploredSans]
+    : undefined;
 
-  // Re-fetches whenever the discussed FEN changes — loading a new position
-  // always means a fresh evaluation, never a stale carried-over one.
+  // Re-fetches whenever the discussed FEN changes — loading a new position,
+  // or playing/undoing a move on the board, always means a fresh
+  // evaluation, never a stale carried-over one.
   useEffect(() => {
     if (!fen) { setEngine(null); return; }
     let cancelled = false;
@@ -99,21 +113,23 @@ export default function CoachPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fen]);
 
-  function startDiscussing(newFen: string, context: DiscussContext = {}) {
+  function startDiscussing(newFen: string, originalMoveHistory?: string[]) {
     setMessages([]);
-    setStage({ kind: "discussing", fen: newFen, context });
+    setStage({ kind: "discussing", positions: [newFen], exploredSans: [], originalMoveHistory });
   }
 
-  async function handleSend(text: string) {
-    if (stage.kind !== "discussing") return;
+  /** Shared by manual chat input and the auto-prompt fired when a move is
+   * played on the board — both are just "say this to the coach, using the
+   * given position/history for grounding." */
+  async function sendToCoach(text: string, atFen: string, historyForGrounding?: string[]) {
     const next = [...messages, { role: "user" as const, content: text }];
     setMessages(next);
     setChatLoading(true);
     try {
       const { reply } = await discussPosition({
-        fen: stage.fen,
+        fen: atFen,
         history: next,
-        move_history_so_far: stage.context.moveHistorySoFar,
+        move_history_so_far: historyForGrounding,
       });
       setMessages(m => [...m, { role: "assistant", content: reply }]);
     } catch (e) {
@@ -122,6 +138,46 @@ export default function CoachPage() {
       setChatLoading(false);
     }
   }
+
+  function handleSend(text: string) {
+    if (stage.kind !== "discussing") return;
+    sendToCoach(text, stage.positions[stage.positions.length - 1], fullMoveHistory);
+  }
+
+  /** The core of the redesign: moving a piece on the board isn't a dead
+   * end that just changes what's displayed — it immediately asks the coach
+   * about the position that results, the same way a coach sitting next to
+   * you would react as you move. */
+  function handleBoardMove(newFen: string, san: string) {
+    if (stage.kind !== "discussing") return;
+    const positions = [...stage.positions, newFen];
+    const exploredSans = [...stage.exploredSans, san];
+    setStage({ kind: "discussing", positions, exploredSans, originalMoveHistory: stage.originalMoveHistory });
+    const newHistory = [...(stage.originalMoveHistory ?? []), ...exploredSans];
+    sendToCoach(`I just played ${san}. What do you think?`, newFen, newHistory);
+  }
+
+  function undoMove() {
+    if (stage.kind !== "discussing" || stage.exploredSans.length === 0) return;
+    setStage({
+      kind: "discussing",
+      positions: stage.positions.slice(0, -1),
+      exploredSans: stage.exploredSans.slice(0, -1),
+      originalMoveHistory: stage.originalMoveHistory,
+    });
+  }
+
+  function resetToOriginal() {
+    if (stage.kind !== "discussing" || stage.exploredSans.length === 0) return;
+    setStage({
+      kind: "discussing",
+      positions: [stage.positions[0]],
+      exploredSans: [],
+      originalMoveHistory: stage.originalMoveHistory,
+    });
+  }
+
+  const hasExplored = stage.kind === "discussing" && stage.exploredSans.length > 0;
 
   return (
     <>
@@ -163,7 +219,7 @@ export default function CoachPage() {
           {stage.kind === "game-step" && (
             <>
               <BackButton onBack={() => setStage({ kind: "choose" })} />
-              <GameStepper pgn={stage.pgn} onConfirm={(f, sans) => startDiscussing(f, { moveHistorySoFar: sans })} />
+              <GameStepper pgn={stage.pgn} onConfirm={(f, sans) => startDiscussing(f, sans)} />
             </>
           )}
 
@@ -183,9 +239,25 @@ export default function CoachPage() {
                 <div className="flex lg:hidden justify-center">
                   <CoachEvalBar cp={engine?.cp ?? null} flipped={flipped} />
                 </div>
-                <CoachBoard fen={stage.fen} flipped={flipped} />
+                <CoachBoard
+                  fen={stage.positions[stage.positions.length - 1]}
+                  flipped={flipped}
+                  onMove={handleBoardMove}
+                  interactive={!chatLoading}
+                />
+                <p style={{ textAlign: "center", fontSize: 11.5, color: "var(--text-muted)", margin: 0 }}>
+                  {hasExplored
+                    ? `Exploring: ${stage.exploredSans.join(" ")}`
+                    : "Drag or click a piece to try a move — the coach will react to it."}
+                </p>
                 <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
                   <button onClick={() => setFlipped(f => !f)} style={smallBtn}>{"⟲ Flip Board"}</button>
+                  {hasExplored && (
+                    <>
+                      <button onClick={undoMove} style={smallBtn}>{"↩ Undo Move"}</button>
+                      <button onClick={resetToOriginal} style={smallBtn}>{"⟲ Reset to Original Position"}</button>
+                    </>
+                  )}
                   <button onClick={() => setStage({ kind: "choose" })} style={smallBtn}>Load a different position</button>
                 </div>
                 <MoveRecommendations topMoves={engine?.topMoves ?? []} sideToMove={sideToMove} />
