@@ -30,14 +30,19 @@ function BoardSkeleton() {
  * commit is derived fresh from the current `fen` prop (no persistent
  * internal chess.js instance), since the parent always re-renders with the
  * updated FEN right after a move, keeping this component purely
- * functional. */
+ * functional.
+ *
+ * `arrowMove`, when set, draws a gold arrow + pulsing ring on the
+ * destination square — the coach "pointing at the board" while its voice
+ * narration talks about that move (see lib/useCoachVoice.ts). */
 export function CoachBoard({
-  fen, flipped = false, onMove, interactive = true,
+  fen, flipped = false, onMove, interactive = true, arrowMove = null,
 }: {
   fen: string;
   flipped?: boolean;
   onMove?: (newFen: string, san: string) => void;
   interactive?: boolean;
+  arrowMove?: { from: string; to: string } | null;
 }) {
   const movesEnabled = !!onMove && interactive;
   const [pendingPromotion, setPendingPromotion] = useState<{ from: Square; to: Square; color: "w" | "b" } | null>(null);
@@ -82,6 +87,10 @@ export function CoachBoard({
 
   const { onSquareClick, clickSquareStyles } = useClickToMove(fen, movesEnabled, onPieceDrop);
 
+  const arrowSquareStyles: Record<string, React.CSSProperties> = arrowMove
+    ? { [arrowMove.to]: { boxShadow: "inset 0 0 0 3px var(--gold)", animation: "coach-voice-pulse 1.2s ease-in-out infinite" } }
+    : {};
+
   const boardOptions: Record<string, unknown> = {
     position: fen,
     boardOrientation: flipped ? "black" : "white",
@@ -90,19 +99,29 @@ export function CoachBoard({
       boxShadow: "var(--shadow-lg)",
       height: "auto",
     },
+    arrows: arrowMove ? [{ startSquare: arrowMove.from, endSquare: arrowMove.to, color: "var(--gold)" }] : [],
   };
   if (movesEnabled) {
     boardOptions.onPieceDrop = onPieceDrop;
     boardOptions.onSquareClick = onSquareClick;
-    boardOptions.squareStyles = clickSquareStyles;
+    boardOptions.squareStyles = { ...clickSquareStyles, ...arrowSquareStyles };
     boardOptions.canDragPiece = () => true;
   } else {
     boardOptions.allowDragging = false;
+    boardOptions.squareStyles = arrowSquareStyles;
   }
 
   return (
     <div style={{ width: "100%", aspectRatio: "1 / 1", position: "relative" }}>
       <Chessboard options={boardOptions} />
+      {arrowMove && (
+        <style>{`
+          @keyframes coach-voice-pulse {
+            0%, 100% { box-shadow: inset 0 0 0 3px var(--gold); }
+            50%      { box-shadow: inset 0 0 0 3px var(--gold), 0 0 10px var(--gold); }
+          }
+        `}</style>
+      )}
 
       {pendingPromotion && (
         <div

@@ -9,6 +9,7 @@ import { GameImportPanel } from "@/components/coach/GameImportPanel";
 import { GameStepper } from "@/components/coach/GameStepper";
 import { BoardEditor } from "@/components/coach/BoardEditor";
 import { CoachChat } from "@/components/coach/CoachChat";
+import { useCoachVoice } from "@/lib/useCoachVoice";
 import { evaluateCandidateMoves, discussPosition, type CandidateMove, type ChatMessage } from "@/lib/api";
 
 type Stage =
@@ -85,12 +86,23 @@ export default function CoachPage() {
   const [chatLoading, setChatLoading] = useState(false);
   const [flipped, setFlipped] = useState(false);
   const [engine, setEngine] = useState<{ cp: number | null; topMoves: CandidateMove[] } | null>(null);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
 
   const fen = stage.kind === "discussing" ? stage.positions[stage.positions.length - 1] : null;
   const sideToMove: "w" | "b" = fen?.split(" ")[1] === "b" ? "b" : "w";
   const fullMoveHistory = stage.kind === "discussing"
     ? [...(stage.originalMoveHistory ?? []), ...stage.exploredSans]
     : undefined;
+
+  // Speaks the latest coach reply aloud, and tracks which move it's
+  // currently talking about so the board can point at it — see
+  // lib/useCoachVoice.ts. Derived straight from the message list rather
+  // than e.g. messages.length: this self-resets to "" the instant a new
+  // question is sent (before the reply arrives), correctly cutting off
+  // stale speech from the previous answer.
+  const lastMsg = messages[messages.length - 1];
+  const spokenText = lastMsg?.role === "assistant" ? lastMsg.content : "";
+  const { activeMove } = useCoachVoice(spokenText, fen ?? "", voiceEnabled);
 
   // Re-fetches whenever the discussed FEN changes — loading a new position,
   // or playing/undoing a move on the board, always means a fresh
@@ -244,6 +256,7 @@ export default function CoachPage() {
                   flipped={flipped}
                   onMove={handleBoardMove}
                   interactive={!chatLoading}
+                  arrowMove={activeMove}
                 />
                 <p style={{ textAlign: "center", fontSize: 11.5, color: "var(--text-muted)", margin: 0 }}>
                   {hasExplored
@@ -252,6 +265,19 @@ export default function CoachPage() {
                 </p>
                 <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
                   <button onClick={() => setFlipped(f => !f)} style={smallBtn}>{"⟲ Flip Board"}</button>
+                  <button
+                    onClick={() => setVoiceEnabled(v => !v)}
+                    title={voiceEnabled ? "Mute coach voice" : "Enable coach voice"}
+                    style={{
+                      width: 36, height: 36, borderRadius: 8, cursor: "pointer",
+                      display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15,
+                      background: voiceEnabled ? "rgba(79,142,247,0.12)" : "var(--bg-elevated)",
+                      border: `1px solid ${voiceEnabled ? "rgba(79,142,247,0.35)" : "var(--border)"}`,
+                      color: voiceEnabled ? "var(--accent-blue)" : "var(--text-muted)",
+                    }}
+                  >
+                    {voiceEnabled ? "🔊" : "🔇"}
+                  </button>
                   {hasExplored && (
                     <>
                       <button onClick={undoMove} style={smallBtn}>{"↩ Undo Move"}</button>
