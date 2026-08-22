@@ -112,6 +112,14 @@ function AccountMenu() {
             Puzzles
           </Link>
           <Link
+            href="/coach"
+            onClick={() => setOpen(false)}
+            style={{ padding: "8px 10px", borderRadius: 6, fontSize: 13, color: "var(--text-secondary)", textDecoration: "none" }}
+            className="block sm:hidden hover:bg-[var(--bg-elevated)]"
+          >
+            AI Coach
+          </Link>
+          <Link
             href="/dashboard"
             onClick={() => setOpen(false)}
             style={{ display: "block", padding: "8px 10px", borderRadius: 6, fontSize: 13, color: "var(--text-secondary)", textDecoration: "none" }}
@@ -223,6 +231,7 @@ export function Navbar() {
         {navLink("/scan", "Scan")}
         {navLink("/profile", "Profile")}
         {navLink("/puzzles", "Puzzles")}
+        {navLink("/coach", "AI Coach")}
 
         {/* Theme toggle */}
         <button

@@ -577,6 +577,23 @@ export async function chatAboutPosition(params: {
   });
 }
 
+// ── /coach: freeform position discussion (separate from the mistake-follow-up
+// chat above — no played_move/best_move, always runs on Claude) ────────────
+
+export async function discussPosition(params: {
+  fen: string;
+  history: ChatMessage[];
+  player_color?: string;
+  estimated_elo?: number;
+  move_history_so_far?: string[];
+}): Promise<{ reply: string }> {
+  return apiFetch(`${BASE}/api/analysis/position/discuss`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+}
+
 // ── Peer benchmark ────────────────────────────────────────────────────────────
 
 export type PeerMove = { san: string; uci: string; count: number; pct: number };

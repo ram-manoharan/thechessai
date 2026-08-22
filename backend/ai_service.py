@@ -25,6 +25,20 @@ logger = logging.getLogger(__name__)
 # Install: pip install openai   (already a transitive dep via groq in most envs)
 
 _PROVIDER_CONFIG = {
+    # Not OpenAI-compatible (different SDK, different request/response shape)
+    # -- __init__ special-cases construction of the client for this entry,
+    # and _create_completion translates the call/response shape so every
+    # existing caller (analyze_game, explain_position, chat_about_position,
+    # kid-mode, profile analysis) keeps working unchanged. The default
+    # provider as of 2026-08: the Together account tied to TOGETHER_API_KEY
+    # was compromised, so "together" must never be the default again --
+    # only re-enable it after rotating that key AND auditing for abuse.
+    "anthropic": {
+        "base_url":     None,
+        "api_key":      os.getenv("ANTHROPIC_API_KEY"),
+        "model":        os.getenv("COACH_MODEL", "claude-sonnet-5").strip() or "claude-sonnet-5",
+        "vision_model": "claude-sonnet-5",
+    },
     "openai": {
         "base_url":     None,   # use default OpenAI endpoint
         "api_key":      os.getenv("OPENAI_API_KEY"),
@@ -63,7 +77,7 @@ _PROVIDER_CONFIG = {
     },
 }
 
-_PROVIDER = os.getenv("AI_PROVIDER", "together").lower()
+_PROVIDER = os.getenv("AI_PROVIDER", "anthropic").lower()
 
 # ── ELO-adaptive coaching bands ─────────────────────────────────────────────
 # The single most-cited flaw in every competing AI chess coach (DecodeChess
@@ -155,12 +169,52 @@ _SPECIFICITY_RULES = """SPECIFICITY CONTRACT — every sentence you write must b
 """
 
 
+class _AnthropicAsOpenAIResponse:
+    """Minimal stand-in for an OpenAI chat-completion response, exposing
+    just .choices[0].message.content -- the only shape every existing
+    caller in this file reads. See AIService._anthropic_completion."""
+    def __init__(self, text: str):
+        self.choices = [_AnthropicAsOpenAIChoice(text)]
+
+
+class _AnthropicAsOpenAIChoice:
+    def __init__(self, text: str):
+        self.message = _AnthropicAsOpenAIMessage(text)
+
+
+class _AnthropicAsOpenAIMessage:
+    def __init__(self, text: str):
+        self.content = text
+
+
 class AIService:
     """LLM-only service. Provider is selected via the AI_PROVIDER env var.
     All providers use the OpenAI chat-completions interface (openai Python SDK).
     """
 
     def __init__(self):
+        # ── Coach client (for /coach's open-ended position discussion) ──────
+        # Unconditional and independent of AI_PROVIDER/VISION_PROVIDER — the
+        # /coach feature always uses Claude regardless of which provider the
+        # rest of the app's coaching text runs on. Built first, before the
+        # early-return below (a missing primary-provider key would otherwise
+        # leave this unset too). COACH_MODEL lets the model be bumped from
+        # Sonnet to Opus later purely via env var, no code change.
+        self.coach_model = os.getenv("COACH_MODEL", "claude-sonnet-5").strip() or "claude-sonnet-5"
+        self._coach_client = None
+        self.coach_available = False
+        coach_key = os.getenv("ANTHROPIC_API_KEY")
+        if coach_key:
+            try:
+                import anthropic as _anthropic
+                self._coach_client = _anthropic.Anthropic(api_key=coach_key)
+                self.coach_available = True
+                logger.info("AIService: coach chat via Anthropic %s", self.coach_model)
+            except Exception as e:
+                logger.warning("Failed to init coach client: %s", e)
+        else:
+            logger.warning("ANTHROPIC_API_KEY not set — /coach will be unavailable.")
+
         cfg = _PROVIDER_CONFIG.get(_PROVIDER)
         if not cfg:
             logger.warning("Unknown AI_PROVIDER '%s' — falling back to openai.", _PROVIDER)
@@ -177,20 +231,34 @@ class AIService:
             return
 
         try:
-            from openai import OpenAI
-            client_kwargs = {"api_key": cfg["api_key"]}
-            if cfg["base_url"]:
-                client_kwargs["base_url"] = cfg["base_url"]
-            self.client      = OpenAI(**client_kwargs)
+            if _PROVIDER == "anthropic":
+                # Not OpenAI-compatible -- _create_completion translates the
+                # call/response shape for this client (see _anthropic_completion),
+                # so every existing caller below keeps working unmodified.
+                import anthropic as _anthropic_sdk
+                self.client = _anthropic_sdk.Anthropic(api_key=cfg["api_key"])
+            else:
+                from openai import OpenAI
+                client_kwargs = {"api_key": cfg["api_key"]}
+                if cfg["base_url"]:
+                    client_kwargs["base_url"] = cfg["base_url"]
+                self.client = OpenAI(**client_kwargs)
             self.model_name  = cfg["model"]
             self.model_available = True
             logger.info("AIService: provider=%s  model=%s", _PROVIDER, self.model_name)
 
             # ── Vision client (for handwritten notation OCR) ──────────────
-            # VISION_PROVIDER env var pins the choice explicitly.
-            # Without it: OpenAI key → current-provider vision model → Groq (free).
+            # VISION_PROVIDER env var pins the choice explicitly. Defaults to
+            # matching the primary provider when it's Anthropic (both the
+            # coaching text and OCR should run on the same account), since
+            # the fallback chain below can't safely reuse self.client itself
+            # in that case (the "_anthropic" sentinel branch below is a
+            # separate, already-correct code path, not this fallback).
+            # Otherwise: OpenAI key → current-provider vision model → Groq (free).
             # Groq is last because its free tier has strict image-type limits.
-            vision_provider = os.getenv("VISION_PROVIDER", "").strip().lower()
+            vision_provider = os.getenv("VISION_PROVIDER", "").strip().lower() or (
+                "anthropic" if _PROVIDER == "anthropic" else ""
+            )
             openai_key    = os.getenv("OPENAI_API_KEY")
             groq_key      = os.getenv("GROQ_API_KEY")
             anthropic_key = os.getenv("ANTHROPIC_API_KEY")
@@ -280,11 +348,21 @@ class AIService:
         Anything not a rate-limit/transient error (bad request, auth
         failure, etc.) raises immediately -- retrying those would just
         waste time repeating a call that can never succeed.
+
+        When the resolved client is an Anthropic SDK client (AI_PROVIDER=
+        anthropic), delegates to _anthropic_completion, which translates the
+        OpenAI chat-completions call shape into Anthropic's Messages API and
+        wraps the reply back into an OpenAI-like response -- every existing
+        caller (analyze_game, explain_position, chat_about_position,
+        kid-mode, profile analysis) keeps its own code completely unchanged.
         """
+        target = client if client is not None else self.client
+        if target is not None and target.__class__.__module__.split(".")[0] == "anthropic":
+            return self._anthropic_completion(target, max_retries=max_retries, **kwargs)
+
         import time
         from openai import RateLimitError, APIStatusError, APIConnectionError, APITimeoutError
 
-        target = client if client is not None else self.client
         delay = 1.0
         last_exc = None
         for attempt in range(max_retries):
@@ -299,6 +377,73 @@ class AIService:
             if attempt < max_retries - 1:
                 logger.warning(
                     "LLM call failed (attempt %d/%d), retrying in %.1fs: %s",
+                    attempt + 1, max_retries, delay, last_exc,
+                )
+                time.sleep(delay)
+                delay *= 2
+        raise last_exc
+
+    def _anthropic_completion(self, target, *, max_retries: int = 3, **kwargs):
+        """Translates an OpenAI-shaped chat.completions.create(...) call
+        (messages list with an optional {"role":"system",...} entry, model,
+        max_tokens, temperature, seed) into Anthropic's Messages API (system
+        as a top-level param, no seed support), and wraps the reply in a
+        minimal object exposing .choices[0].message.content so callers
+        written against the OpenAI response shape don't need to change.
+        Same retry/backoff behavior as the OpenAI path, against Anthropic's
+        own transient-error exception types.
+        """
+        import time
+        from anthropic import RateLimitError, APIStatusError, APIConnectionError, APITimeoutError
+
+        messages = kwargs.pop("messages", [])
+        system_parts = [m["content"] for m in messages if m.get("role") == "system"]
+        turns = [m for m in messages if m.get("role") != "system"]
+        if turns and turns[0].get("role") != "user":
+            turns = turns[1:]  # Anthropic requires the array to start on a user turn
+        if not turns:
+            turns = [{"role": "user", "content": "Continue."}]
+
+        kwargs.pop("seed", None)  # not supported by Anthropic -- these calls become non-deterministic
+        kwargs.pop("temperature", None)  # claude-sonnet-5 rejects this outright ("deprecated for this model")
+        call_kwargs = {
+            "model": kwargs.pop("model", self.model_name),
+            "max_tokens": kwargs.pop("max_tokens", 1024),
+            "messages": turns,
+            # claude-sonnet-5 uses adaptive thinking by default, which shares
+            # the same max_tokens budget as the reply -- observed live, this
+            # silently ate 100% of a 1400-token budget and returned an empty
+            # text response with no error, breaking every JSON-output caller
+            # here. These are all short, bounded outputs (a JSON field or a
+            # brief chat reply) where the SPECIFICITY CONTRACT already does
+            # the "reasoning" via explicit prompt instructions, so disabling
+            # thinking trades away nothing and guarantees the full budget
+            # goes to the actual answer. discuss_position (the /coach chat)
+            # calls the SDK directly, not through here, and deliberately
+            # keeps thinking on -- verified working well for that richer,
+            # open-ended use case.
+            "thinking": {"type": "disabled"},
+        }
+        if system_parts:
+            call_kwargs["system"] = "\n\n".join(system_parts)
+
+        delay = 1.0
+        last_exc = None
+        for attempt in range(max_retries):
+            try:
+                msg = target.messages.create(**call_kwargs)
+                text_blocks = [b for b in msg.content if b.type == "text"]
+                text = text_blocks[0].text if text_blocks else ""
+                return _AnthropicAsOpenAIResponse(text)
+            except (RateLimitError, APIConnectionError, APITimeoutError) as e:
+                last_exc = e
+            except APIStatusError as e:
+                if e.status_code < 500:
+                    raise
+                last_exc = e
+            if attempt < max_retries - 1:
+                logger.warning(
+                    "Anthropic call failed (attempt %d/%d), retrying in %.1fs: %s",
                     attempt + 1, max_retries, delay, last_exc,
                 )
                 time.sleep(delay)
@@ -467,7 +612,7 @@ Requirements:
             response = self._create_completion(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=2560,
+                max_tokens=3200,  # extra headroom for Claude's adaptive thinking on top of this large JSON schema
                 temperature=0.0,
                 seed=42,
             )
@@ -579,7 +724,7 @@ Return ONLY valid JSON — no markdown fences, no extra text:
             response = self._create_completion(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=768,
+                max_tokens=1400,  # extra headroom for Claude's adaptive thinking
                 temperature=0.1,
                 seed=42,
             )
@@ -655,12 +800,106 @@ HOW TO ANSWER:
             response = self._create_completion(
                 model=self.model_name,
                 messages=messages,
-                max_tokens=600,
+                max_tokens=1200,  # extra headroom for Claude's adaptive thinking
                 temperature=0.3,
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
             logger.error("chat_about_position error: %s", e)
+            return f"Sorry, I couldn't process that: {e}"
+
+    # ── /coach: freeform position discussion (Claude, not the main provider) ──
+
+    def discuss_position(
+        self,
+        fen: str,
+        stockfish_analysis: Optional[dict],
+        history: list,
+        estimated_elo: Optional[int] = None,
+        player_color: str = "white",
+        move_history_so_far: Optional[list] = None,
+    ) -> str:
+        """Open-ended chat about a freely-loaded position (FEN paste, a
+        specific ply of an imported game, or a manually set-up board) — not
+        tied to a single graded mistake the way chat_about_position is.
+        Runs on self._coach_client (Claude, via COACH_MODEL) regardless of
+        AI_PROVIDER, since accuracy matters most here and this is the app's
+        core differentiator. `stockfish_analysis` is the router's pre-computed
+        StockfishService.analyze_position(fen, multi_pv=3) result — its
+        eval values are relative to the SIDE TO MOVE (python-chess
+        score.relative), not White, so they're flipped to White-POV below
+        before being handed to the model.
+        """
+        if not self.coach_available:
+            return "The AI coach isn't configured right now — ANTHROPIC_API_KEY is missing."
+
+        directives = _band_directives(estimated_elo)
+
+        side_to_move = "White" if player_color == "white" else "Black"
+        legal_moves_note = ""
+        try:
+            board = chess.Board(fen)
+            side_to_move = "White" if board.turn else "Black"
+            legal_sans = sorted(board.san(m) for m in board.legal_moves)
+            legal_moves_note = f"\nLEGAL MOVES FROM THIS POSITION (ground truth — anything not in this list is illegal): {', '.join(legal_sans)}"
+        except Exception:
+            pass
+
+        def _white_pov(ev: dict) -> str:
+            val = ev["value"]
+            if side_to_move == "Black":
+                val = -val
+            return f"#{val}" if ev.get("type") == "mate" else f"{val / 100:+.2f}"
+
+        engine_note = ""
+        if stockfish_analysis and "error" not in stockfish_analysis:
+            top = stockfish_analysis.get("top_moves", [])[:3]
+            if top:
+                lines = [f"{i}. {m['SAN']} (resulting eval, White POV: {_white_pov(m['Evaluation'])})" for i, m in enumerate(top, 1)]
+                engine_note = (
+                    f"\nENGINE EVALUATION (ground truth, White POV, positive = better for White): "
+                    f"{_white_pov(stockfish_analysis['evaluation'])}"
+                    f"\nENGINE TOP {len(lines)} MOVES (ground truth — ONLY these moves have a real, verified evaluation):\n"
+                    + "\n".join(lines)
+                )
+
+        history_note = f"\nMOVES PLAYED TO REACH THIS POSITION: {' '.join(move_history_so_far)}" if move_history_so_far else ""
+
+        system_prompt = f"""You are a sharp, engaging grandmaster chess coach having an open-ended conversation with a student about ONE specific chess position — not following up on a single graded move, but free-ranging: they may ask about plans, specific candidate moves, threats, or just "what's going on here". Stay strictly grounded in this position — never invent moves, evaluations, or lines inconsistent with the data below.
+
+{_SPECIFICITY_RULES}
+{directives}
+
+FEN: {fen}
+Side to move: {side_to_move}{history_note}{legal_moves_note}{engine_note}
+
+GROUNDING RULES SPECIFIC TO OPEN-ENDED CHAT:
+- The ENGINE TOP MOVES list above is the ONLY source of real evaluation numbers. If asked "what's the best move", answer with the #1 engine move and its real evaluation — never substitute your own guess for the engine's.
+- If asked about a legal move that is NOT in the ENGINE TOP MOVES list, you may still discuss it qualitatively (what it threatens, what it misses, why it's likely worse) per the SPECIFICITY CONTRACT, but do NOT state a specific centipawn number or precise comparison for it — you don't have a verified number for it. Say things like "weaker than {{top move}}, because..." rather than inventing a value like "-0.4" for a move that was never evaluated.
+- If asked about a move not in the LEGAL MOVES list, say plainly it's illegal here (and briefly why, if obvious) rather than analyzing a fictional line.
+- If the student's message is generic ("what do you think?", "what should I play?", or the conversation is just starting), proactively lead with the engine's #1 recommended move and the concrete reason it works — don't make them ask twice.
+- Plain text only — never JSON, never markdown fences, no bullet characters (this renders in a plain chat bubble).
+- Default to 2-4 sentences; up to ~6 sentences / two short paragraphs only when comparing multiple lines genuinely requires it."""
+
+        recent = list(history[-10:])
+        if recent and recent[0].get("role") != "user":
+            recent = recent[1:]
+        if not recent or recent[-1].get("role") != "user":
+            recent = recent + [{"role": "user", "content": "What do you think of this position?"}]
+
+        try:
+            msg = self._coach_client.messages.create(
+                model=self.coach_model,
+                max_tokens=1600,
+                system=system_prompt,
+                messages=recent,
+            )
+            text_blocks = [b for b in msg.content if b.type == "text"]
+            if not text_blocks:
+                return f"Sorry, the coach model returned no text (stop_reason={msg.stop_reason})."
+            return text_blocks[0].text.strip()
+        except Exception as e:
+            logger.error("discuss_position error: %s", e)
             return f"Sorry, I couldn't process that: {e}"
 
     # ── Kid Mode analysis ─────────────────────────────────────────────────
@@ -760,7 +999,7 @@ Coach Spark:"""
             response = self._create_completion(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=2000,
+                max_tokens=2800,  # extra headroom for Claude's adaptive thinking
                 temperature=0.0,
                 seed=42,
             )
@@ -898,7 +1137,7 @@ Respond with ONLY valid JSON — no markdown, no extra text:
             response = self._create_completion(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=1800,
+                max_tokens=2600,  # extra headroom for Claude's adaptive thinking
                 temperature=0.0,
                 seed=42,
             )
@@ -1155,7 +1394,7 @@ Respond with ONLY valid JSON:
             p2_response = self._create_completion(
                 model=self.model_name,
                 messages=[{"role": "user", "content": pass2_prompt}],
-                max_tokens=1000,
+                max_tokens=1600,  # extra headroom for Claude's adaptive thinking
                 temperature=0.0,
             )
             raw2 = p2_response.choices[0].message.content.strip()

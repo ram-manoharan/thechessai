@@ -496,6 +496,57 @@ async def chat_about_position(req: ChatRequest):
         raise HTTPException(500, str(e))
 
 
+class DiscussMessage(BaseModel):
+    role: str    # "user" | "assistant"
+    content: str
+
+
+class DiscussRequest(BaseModel):
+    fen: str
+    history: list[DiscussMessage] = []
+    player_color: str = "white"
+    estimated_elo: Optional[int] = None
+    move_history_so_far: Optional[list[str]] = None   # SAN list up to the chosen ply — only set for the game-loaded path
+
+
+@lru_cache(maxsize=256)
+def _cached_position_analysis(fen: str, multi_pv: int = 3) -> dict:
+    """A FEN's engine evaluation never changes, so within one /coach
+    conversation (repeated calls with the same fen as the chat continues)
+    this avoids re-running Stockfish on every turn."""
+    return _stockfish().analyze_position(fen, multi_pv=multi_pv)
+
+
+@router.post("/position/discuss")
+async def discuss_position(req: DiscussRequest):
+    """Freeform, open-ended position discussion for /coach — distinct from
+    /position/chat above, which only ever follows up on a specific graded
+    mistake. Always runs on AIService's dedicated Claude coach client."""
+    try:
+        chess.Board(req.fen)
+    except Exception:
+        raise HTTPException(400, "Invalid FEN.")
+    try:
+        ai = _ai()
+        if not getattr(ai, "coach_available", False):
+            raise HTTPException(503, "AI coach not available — ANTHROPIC_API_KEY not configured.")
+        analysis = await run_in_threadpool(_cached_position_analysis, req.fen, 3)
+        reply = await run_in_threadpool(
+            ai.discuss_position,
+            fen=req.fen,
+            stockfish_analysis=analysis,
+            history=[{"role": m.role, "content": m.content} for m in req.history],
+            estimated_elo=req.estimated_elo,
+            player_color=req.player_color,
+            move_history_so_far=req.move_history_so_far,
+        )
+        return {"reply": reply}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 _LICHESS_EXPLORER_HEADERS = {"User-Agent": "chessAIlytics/1.0 (github.com/chessAIlytics)"}
 # Lichess changed policy in Feb 2026 — the opening explorer now requires
 # being signed in (confirmed live: unauthenticated requests get HTTP 401,
