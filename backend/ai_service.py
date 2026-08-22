@@ -897,6 +897,16 @@ GROUNDING RULES SPECIFIC TO OPEN-ENDED CHAT:
             msg = self._coach_client.messages.create(
                 model=self.coach_model,
                 max_tokens=1600,
+                # Verified live: adaptive thinking (the default) can silently
+                # consume the ENTIRE max_tokens budget and return zero text
+                # blocks -- the same failure mode already fixed in
+                # _anthropic_completion for every other function, but this
+                # one call site is direct SDK usage, not routed through that
+                # shim, so it needed the same fix applied separately. A
+                # snappy, grounded chat reply doesn't need chain-of-thought
+                # anyway -- the SPECIFICITY CONTRACT + explicit grounding
+                # data already do that work in the prompt itself.
+                thinking={"type": "disabled"},
                 system=system_prompt,
                 messages=recent,
             )
